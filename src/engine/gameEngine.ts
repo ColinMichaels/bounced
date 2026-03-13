@@ -8,6 +8,7 @@ import type {
   DifficultyLevel,
   GamePhase,
   GameSnapshot,
+  PlayerProgressState,
   RouteWindowState,
   TargetState,
   WindowBoundsPayload,
@@ -42,6 +43,46 @@ export class GameEngine {
 
   constructor(channel: GameChannel) {
     this.channel = channel
+  }
+
+  restoreProgress(state: PlayerProgressState | null): void {
+    if (!state) {
+      return
+    }
+
+    const maxUnlockedLevel = clamp(state.maxUnlockedLevel, 1, MAX_LEVEL)
+
+    this.score = Math.max(0, state.score)
+    this.streak = 0
+    this.bestStreak = Math.max(0, state.bestStreak)
+    this.maxUnlockedLevel = maxUnlockedLevel
+    this.currentLevel = clamp(state.selectedLevel, 1, maxUnlockedLevel)
+    this.completedLevels.clear()
+
+    for (const level of state.completedLevels) {
+      if (level >= 1 && level <= MAX_LEVEL) {
+        this.completedLevels.add(level)
+      }
+    }
+
+    this.score = Math.max(this.score, this.completedLevels.size)
+
+    this.phase = 'idle'
+    this.tick = 0
+    this.balls = []
+    this.resetRouteState()
+    this.note = this.getIdleNote()
+  }
+
+  getProgressState(): PlayerProgressState {
+    return {
+      version: 1,
+      score: this.score,
+      bestStreak: this.bestStreak,
+      selectedLevel: this.currentLevel,
+      maxUnlockedLevel: this.maxUnlockedLevel,
+      completedLevels: [...this.completedLevels].sort((left, right) => left - right),
+    }
   }
 
   subscribe(listener: SnapshotListener): () => void {
@@ -106,13 +147,9 @@ export class GameEngine {
     this.balls = []
     this.resetRouteState()
     this.phase = 'idle'
-    this.score = 0
     this.streak = 0
     this.tick = 0
-    this.currentLevel = 1
-    this.maxUnlockedLevel = 1
-    this.completedLevels.clear()
-    this.note = 'Field offline.'
+    this.note = this.getIdleNote('Session ended.')
     this.windows.clear()
     this.emitSnapshot()
   }
@@ -421,6 +458,17 @@ export class GameEngine {
     }
 
     return `All relays linked. Goal is live in ${activeWindows[activeWindows.length - 1]?.title ?? 'the goal window'}.`
+  }
+
+  private getIdleNote(prefix?: string): string {
+    const allUnlocked = this.completedLevels.size >= MAX_LEVEL
+    const base = allUnlocked
+      ? `All levels unlocked. Level ${this.currentLevel} is queued for replay.`
+      : this.maxUnlockedLevel > 1 || this.completedLevels.size > 0
+        ? `Progress restored. Level ${this.currentLevel} is queued.`
+        : 'Idle. Arm the field to begin at level 1.'
+
+    return prefix ? `${prefix} ${base}` : base
   }
 
   private emitSnapshot(): void {

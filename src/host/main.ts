@@ -5,6 +5,7 @@ import { DIFFICULTY_LEVELS, getDifficultyForLevel, MAX_LEVEL } from '../engine/d
 import { openGameChannel } from '../network/channel'
 import type { GameMessage } from '../shared/messages'
 import type { GameSnapshot } from '../shared/types'
+import { ProgressStorage } from './progressStorage'
 import { WindowManager } from './windowManager'
 
 const startButton = must<HTMLButtonElement>('start-button')
@@ -24,6 +25,7 @@ const hostShell = document.body
 
 const channel = openGameChannel(handleMessage)
 const engine = new GameEngine(channel)
+const progressStorage = new ProgressStorage(window.localStorage)
 const windowManager = new WindowManager(window)
 const ticker = new Worker(new URL('./ticker.worker.ts', import.meta.url), { type: 'module' })
 const MAX_LEVEL_WINDOWS = Math.max(...DIFFICULTY_LEVELS.map((level) => level.activeWindows))
@@ -41,6 +43,7 @@ let lastLayoutKey = ''
 let awaitingFreshBoundsSince = 0
 let hostHasFocus = document.visibilityState === 'visible' && document.hasFocus()
 
+engine.restoreProgress(progressStorage.load())
 engine.subscribe(renderSnapshot)
 
 window.addEventListener('focus', () => {
@@ -183,6 +186,8 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   const goalWindowTitle = snapshot.windows.find((windowState) => windowState.id === snapshot.goalWindowId)?.title ?? 'pending'
   const layoutKey = `${snapshot.selectedLevel}:${snapshot.requiredWindowCount}`
 
+  progressStorage.save(engine.getProgressState())
+
   if (hasStarted && snapshot.campaignComplete) {
     hasStarted = false
     desiredWindowCount = 0
@@ -219,7 +224,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
 
   statusText.textContent = hasStarted
     ? snapshot.note
-    : 'Idle. Allow popups, then start the game to open the signal windows.'
+    : `${snapshot.note} Allow popups, then start the game to open the signal windows.`
   detailNote.textContent = [
     `Game windows open: ${windowManager.getOpenCount()} / ${snapshot.requiredWindowCount}.`,
     `Registered windows: ${registeredCount}.`,

@@ -82,6 +82,15 @@ export interface DifficultyLevel {
   radius: number
 }
 
+export interface PlayerProgressState {
+  version: 1
+  score: number
+  bestStreak: number
+  selectedLevel: number
+  maxUnlockedLevel: number
+  completedLevels: number[]
+}
+
 export interface GameSnapshot {
   tick: number
   phase: GamePhase
