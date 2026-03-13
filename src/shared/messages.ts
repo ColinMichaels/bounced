@@ -1,4 +1,4 @@
-import type { GameSnapshot, WindowBoundsPayload } from './types'
+import type { CatchAttemptPayload, GameSnapshot, WindowBoundsPayload } from './types'
 
 export type GameMessage =
   | {
@@ -21,14 +21,7 @@ export type GameMessage =
     }
   | {
       type: 'catch_attempt'
-      payload: {
-        id: string
-        localX: number
-        localY: number
-        worldX: number
-        worldY: number
-        tick: number
-      }
+      payload: CatchAttemptPayload
     }
   | {
       type: 'request_sync'

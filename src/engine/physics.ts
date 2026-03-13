@@ -1,6 +1,6 @@
 import { TRANSITION_HINT_LOOKAHEAD_MS } from '../shared/constants'
-import { clamp, pointInWindowUnion, rectFromWindow, sample } from '../shared/geometry'
-import type { BallState, DifficultyLevel, Rect, TransitionDirection, TransitionHint, WindowState } from '../shared/types'
+import { circleIntersectsRect, clamp, pointInWindowUnion, rectFromObstacle, rectFromWindow, sample } from '../shared/geometry'
+import type { BallState, DifficultyLevel, ObstacleState, Rect, TransitionDirection, TransitionHint, WindowState } from '../shared/types'
 
 const MAX_SUBSTEP_DISTANCE = 6
 const BALL_FIT_SAMPLE_ANGLES = [
@@ -14,7 +14,12 @@ const BALL_FIT_SAMPLE_ANGLES = [
   Math.PI * 1.75,
 ]
 
-export function advanceBall(ball: BallState, windows: WindowState[], deltaMs: number): BallState {
+export function advanceBall(
+  ball: BallState,
+  windows: WindowState[],
+  obstacles: ObstacleState[],
+  deltaMs: number,
+): BallState {
   if (windows.length === 0) {
     return ball
   }
@@ -26,7 +31,7 @@ export function advanceBall(ball: BallState, windows: WindowState[], deltaMs: nu
   let nextBall = { ...ball }
 
   for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
-    nextBall = advanceBallStep(nextBall, windows, stepSeconds)
+    nextBall = advanceBallStep(nextBall, windows, obstacles, stepSeconds)
   }
 
   return nextBall
@@ -47,6 +52,7 @@ export function retuneBall(ball: BallState, difficulty: DifficultyLevel): BallSt
 export function createBall(
   windows: WindowState[],
   difficulty: DifficultyLevel,
+  obstacles: ObstacleState[] = [],
 ): BallState {
   const spawnWindow = sample(windows)
   const spawnRect = rectFromWindow(spawnWindow)
@@ -57,11 +63,22 @@ export function createBall(
   const maxY = spawnRect.bottom - margin
 
   const angle = randomReadableAngle()
+  let x = clamp(randomBetween(minX, maxX), minX, maxX)
+  let y = clamp(randomBetween(minY, maxY), minY, maxY)
+
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    if (ballFitsInPlayfield(x, y, difficulty.radius, windows, obstacles)) {
+      break
+    }
+
+    x = clamp(randomBetween(minX, maxX), minX, maxX)
+    y = clamp(randomBetween(minY, maxY), minY, maxY)
+  }
 
   return {
     id: `ball-${Math.random().toString(36).slice(2, 10)}`,
-    x: clamp(randomBetween(minX, maxX), minX, maxX),
-    y: clamp(randomBetween(minY, maxY), minY, maxY),
+    x,
+    y,
     vx: Math.cos(angle) * difficulty.speed,
     vy: Math.sin(angle) * difficulty.speed,
     radius: difficulty.radius,
@@ -70,23 +87,48 @@ export function createBall(
   }
 }
 
-export function stabilizeBall(ball: BallState, windows: WindowState[]): BallState {
+export function stabilizeBall(ball: BallState, windows: WindowState[], obstacles: ObstacleState[]): BallState {
   if (windows.length === 0) {
     return ball
   }
 
-  if (ballFitsInWindows(ball.x, ball.y, ball.radius, windows)) {
+  if (ballFitsInPlayfield(ball.x, ball.y, ball.radius, windows, obstacles)) {
     return ball
   }
 
   const ownerWindow = windows.find((windowState) => windowState.id === ball.ownerWindowId) ?? windows[0]
   const rect = rectFromWindow(ownerWindow)
   const margin = ball.radius + 1
+  let x = clamp(ball.x, rect.left + margin, rect.right - margin)
+  let y = clamp(ball.y, rect.top + margin, rect.bottom - margin)
+
+  if (ballFitsInPlayfield(x, y, ball.radius, windows, obstacles)) {
+    return {
+      ...ball,
+      x,
+      y,
+      ownerWindowId: ownerWindow.id,
+    }
+  }
+
+  for (let attempt = 0; attempt < 28; attempt += 1) {
+    x = clamp(randomBetween(rect.left + margin, rect.right - margin), rect.left + margin, rect.right - margin)
+    y = clamp(randomBetween(rect.top + margin, rect.bottom - margin), rect.top + margin, rect.bottom - margin)
+
+    if (ballFitsInPlayfield(x, y, ball.radius, [ownerWindow], obstaclesForWindow(ownerWindow.id, obstacles))) {
+      return {
+        ...ball,
+        x,
+        y,
+        ownerWindowId: ownerWindow.id,
+      }
+    }
+  }
 
   return {
     ...ball,
-    x: clamp(ball.x, rect.left + margin, rect.right - margin),
-    y: clamp(ball.y, rect.top + margin, rect.bottom - margin),
+    x,
+    y,
     ownerWindowId: ownerWindow.id,
   }
 }
@@ -278,13 +320,18 @@ function getAxisEntryRange(
   }
 }
 
-function advanceBallStep(ball: BallState, windows: WindowState[], stepSeconds: number): BallState {
+function advanceBallStep(
+  ball: BallState,
+  windows: WindowState[],
+  obstacles: ObstacleState[],
+  stepSeconds: number,
+): BallState {
   const deltaX = ball.vx * stepSeconds
   const deltaY = ball.vy * stepSeconds
   const moveX = ball.x + deltaX
   const moveY = ball.y + deltaY
 
-  if (ballFitsInWindows(moveX, moveY, ball.radius, windows)) {
+  if (ballFitsInPlayfield(moveX, moveY, ball.radius, windows, obstacles)) {
     return {
       ...ball,
       x: moveX,
@@ -292,8 +339,8 @@ function advanceBallStep(ball: BallState, windows: WindowState[], stepSeconds: n
     }
   }
 
-  const canMoveX = ballFitsInWindows(moveX, ball.y, ball.radius, windows)
-  const canMoveY = ballFitsInWindows(ball.x, moveY, ball.radius, windows)
+  const canMoveX = ballFitsInPlayfield(moveX, ball.y, ball.radius, windows, obstacles)
+  const canMoveY = ballFitsInPlayfield(ball.x, moveY, ball.radius, windows, obstacles)
 
   if (canMoveX && !canMoveY) {
     return {
@@ -318,16 +365,40 @@ function advanceBallStep(ball: BallState, windows: WindowState[], stepSeconds: n
   }
 }
 
-function ballFitsInWindows(x: number, y: number, radius: number, windows: WindowState[]): boolean {
+function ballFitsInPlayfield(
+  x: number,
+  y: number,
+  radius: number,
+  windows: WindowState[],
+  obstacles: ObstacleState[],
+): boolean {
   if (!pointInWindowUnion(x, y, windows)) {
     return false
   }
 
-  return BALL_FIT_SAMPLE_ANGLES.every((angle) => pointInWindowUnion(
-    x + (Math.cos(angle) * radius),
-    y + (Math.sin(angle) * radius),
-    windows,
-  ))
+  if (ballIntersectsObstacle(x, y, radius, obstacles)) {
+    return false
+  }
+
+  return BALL_FIT_SAMPLE_ANGLES.every((angle) => {
+    const sampleX = x + (Math.cos(angle) * radius)
+    const sampleY = y + (Math.sin(angle) * radius)
+
+    return (
+      pointInWindowUnion(sampleX, sampleY, windows)
+      && !ballIntersectsObstacle(sampleX, sampleY, 1, obstacles)
+    )
+  })
+}
+
+function ballIntersectsObstacle(x: number, y: number, radius: number, obstacles: ObstacleState[]): boolean {
+  return obstacles
+    .filter((obstacle) => !obstacle.destroyed)
+    .some((obstacle) => circleIntersectsRect(x, y, radius, rectFromObstacle(obstacle)))
+}
+
+function obstaclesForWindow(windowId: string, obstacles: ObstacleState[]): ObstacleState[] {
+  return obstacles.filter((obstacle) => obstacle.windowId === windowId && !obstacle.destroyed)
 }
 
 function randomReadableAngle(): number {

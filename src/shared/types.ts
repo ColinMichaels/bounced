@@ -46,6 +46,19 @@ export interface GoalState {
   radius: number
 }
 
+export interface ObstacleState {
+  id: string
+  windowId: string
+  kind: 'barrier'
+  x: number
+  y: number
+  width: number
+  height: number
+  hitPoints: number
+  maxHitPoints: number
+  destroyed: boolean
+}
+
 export type RouteWindowRole = 'start' | 'bridge' | 'goal'
 export type RouteWindowStatus = 'ready' | 'active' | 'cleared' | 'locked'
 
@@ -59,6 +72,21 @@ export interface RouteWindowState {
 export interface TargetState extends GoalState {
   kind: 'bridge' | 'goal'
   label: string
+}
+
+export interface ScoreNodeState extends GoalState {
+  kind: 'score'
+  label: string
+  value: number
+}
+
+export interface CatchAttemptPayload {
+  id: string
+  localX: number
+  localY: number
+  worldX: number
+  worldY: number
+  tick: number
 }
 
 export type TransitionDirection = 'left' | 'right' | 'up' | 'down'
@@ -111,6 +139,8 @@ export interface GameSnapshot {
   goalWindowId: string | null
   routeWindows: RouteWindowState[]
   activeTarget: TargetState | null
+  activeScoreNode: ScoreNodeState | null
+  obstacles: ObstacleState[]
   windows: WindowState[]
   balls: BallState[]
   ball: BallState | null

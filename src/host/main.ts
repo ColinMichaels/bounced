@@ -83,6 +83,12 @@ ticker.onmessage = (event: MessageEvent<{ type: 'tick'; now: number }>) => {
     return
   }
 
+  const closedWindowId = getClosedGameWindowId()
+  if (closedWindowId) {
+    abortSessionDueToClosedWindow(closedWindowId)
+    return
+  }
+
   if (awaitingFreshBoundsSince > 0) {
     const snapshot = engine.getSnapshot()
     if (!hasFreshWindowBounds(snapshot, awaitingFreshBoundsSince)) {
@@ -165,6 +171,14 @@ function handleMessage(message: GameMessage): void {
       break
     case 'unregister_window':
       engine.unregisterWindow(message.payload.id)
+
+      if (hasStarted) {
+        const closedWindowId = getClosedGameWindowId()
+        if (closedWindowId) {
+          abortSessionDueToClosedWindow(closedWindowId)
+        }
+      }
+
       break
     case 'catch_attempt':
       engine.handleCatchAttempt(message.payload)
@@ -187,6 +201,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   const registeredCount = snapshot.windows.length
   const goalWindowTitle = snapshot.windows.find((windowState) => windowState.id === snapshot.goalWindowId)?.title ?? 'pending'
   const layoutKey = `${snapshot.selectedLevel}:${snapshot.requiredWindowCount}`
+  const liveObstacles = snapshot.obstacles.filter((obstacle) => !obstacle.destroyed)
 
   progressStorage.save(engine.getProgressState())
 
@@ -231,6 +246,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     `Game windows open: ${windowManager.getOpenCount()} / ${snapshot.requiredWindowCount}.`,
     `Registered windows: ${registeredCount}.`,
     `Route: start + ${Math.max(0, snapshot.bridgeWindowIds.length)} relay${snapshot.bridgeWindowIds.length === 1 ? '' : 's'} + goal.`,
+    `Barriers: ${liveObstacles.length}.`,
     `Goal window: ${goalWindowTitle}.`,
     `Unlocked levels: 1-${snapshot.maxUnlockedLevel}.`,
     `${snapshot.completedLevels.length} of ${MAX_LEVEL} levels cleared.`,
@@ -247,11 +263,12 @@ function renderSnapshot(snapshot: GameSnapshot): void {
       const routeLabel = routeWindow
         ? `${routeWindow.role}${routeWindow.role === 'bridge' ? ` ${routeWindow.order + 1}` : ''} • ${routeWindow.status}`
         : 'standby'
+      const obstacleCount = liveObstacles.filter((obstacle) => obstacle.windowId === windowState.id).length
 
       return `
         <li>
           <span>${windowState.title}</span>
-          <span class="${marker}">${routeLabel} • ${visibility}</span>
+          <span class="${marker}">${routeLabel} • ${obstacleCount} barrier${obstacleCount === 1 ? '' : 's'} • ${visibility}</span>
         </li>
       `
     })
@@ -276,7 +293,7 @@ function renderWarnings(): void {
   }
 
   if (!readinessWarning && hasStarted) {
-    warnings.push('Use Resume Game or click any game window to recall the cluster. Route the signal through each live relay before the goal unlocks.')
+    warnings.push('Use Resume Game or click any game window to recall the cluster. Closing any room ends the current session.')
   }
 
   warning.hidden = warnings.length === 0
@@ -316,6 +333,32 @@ function recallGameWindows(): void {
   lastFocusedOwnerId = null
   lastFollowAt = 0
   windowManager.recallAll(preferredId)
+}
+
+function getClosedGameWindowId(): string | null {
+  if (!hasStarted || desiredWindowCount <= 0) {
+    return null
+  }
+
+  return windowManager.getClosedWindowIds(desiredWindowCount)[0] ?? null
+}
+
+function abortSessionDueToClosedWindow(windowId: string): void {
+  const snapshot = engine.getSnapshot()
+  const closedWindowTitle = snapshot.windows.find((windowState) => windowState.id === windowId)?.title
+    ?? `Room ${windowId.replace('play-window-', '')}`
+
+  hasStarted = false
+  desiredWindowCount = 0
+  followWindows = true
+  readinessWarning = `${closedWindowTitle} was closed during play. Session aborted.`
+  lastFocusedOwnerId = null
+  lastFollowAt = 0
+  lastLayoutKey = ''
+  awaitingFreshBoundsSince = 0
+  windowManager.closeAll()
+  engine.endGame(`${closedWindowTitle} was closed during play.`)
+  syncDeckPresentation()
 }
 
 function must<T extends HTMLElement>(id: string): T {
