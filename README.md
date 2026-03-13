@@ -21,6 +21,9 @@ This is a playable prototype with:
 - authoritative host-side simulation
 - popup recall/focus controls
 - route-based progression through relay rooms
+- barrier obstacles and click-to-shoot clearing
+- optional relay-room score nodes
+- local progress persistence in `localStorage`
 - compact popup UI and host control deck
 
 Planned next systems are documented in [docs/ROADMAP.md](/Users/colin/Projects/bouced/docs/ROADMAP.md).
@@ -37,8 +40,9 @@ Open the host page, then:
 1. Click `Start Game`.
 2. Allow popups for the site.
 3. Move rooms so the ball can bridge from the start room through each relay room in order.
-4. Route the ball into the final goal target.
-5. Use `Resume Game` on the control deck if the popup cluster falls behind other windows.
+4. Shoot barriers if they block the route or hide bonus pickups.
+5. Route the ball through live relay targets, optional bonus nodes, and then the final goal.
+6. Use `Resume Game` on the control deck if the popup cluster falls behind other windows.
 
 Useful commands:
 
@@ -53,6 +57,8 @@ npm run preview:pages
 
 Each level uses a subset of popup rooms based on difficulty. The first active room is the start room, the middle rooms are ordered relays, and the final room is the goal. A level only clears when the ball reaches each relay target in order and then reaches the goal target.
 
+Relay and goal rooms can contain barriers that physically block the ball. Barriers can be destroyed by clicking inside the room. Once the current relay room is cleared, it can spawn a temporary score node. Routing the ball through that node awards bonus score, but the pickup is lost if the ball leaves the room first.
+
 The ball is simulated in desktop coordinates, but it is constrained by the live geometry of connected popup rooms. Moving rooms changes the reachable shape of the playfield without changing the ball's velocity. If rooms are disconnected, the ball bounces inside its current connected component.
 
 ## Controls
@@ -60,9 +66,14 @@ The ball is simulated in desktop coordinates, but it is constrained by the live 
 - `Start Game`: open or relayout the popup rooms for the selected level and start the simulation
 - `Resume Game`: same primary button while a session is active; brings the popup cluster back to the front and prioritizes the room that currently owns the ball
 - `Reseed Target`: respawn the route targets and signal ball for the current level
-- `End Session`: close spawned game windows and reset campaign progress
-- Click any popup room: recall the cluster to the front
+- `End Session`: close spawned game windows and end the active run while keeping saved progression
+- Click inside a popup room: shoot barriers at the click point
+- Click anywhere in a popup room: also recalls the room cluster to the front
 - Drag popup rooms: change connectivity and routing
+
+Important rule:
+
+- closing any required game room during an active session immediately aborts that run and closes the full popup cluster
 
 ## GitHub Pages
 
@@ -105,7 +116,8 @@ Notes:
 - No backend. Everything runs client-side on one origin.
 - Popups must be allowed by the browser.
 - The host remains the source of truth for simulation and progression.
-- Current gameplay is route-to-goal only. Click shooting and obstacles are not implemented yet.
+- Browser chrome on popup windows cannot be fully hidden, so closing/minimizing remains OS/browser controlled.
+- Current gameplay includes obstacle clearing and optional bonus pickups, but upgrades and blocked room sides are still future work.
 
 ## Why The Physics Are Custom
 

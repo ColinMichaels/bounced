@@ -184,6 +184,12 @@ export class WindowManager {
     return total
   }
 
+  getClosedWindowIds(requiredCount: number): string[] {
+    return [...this.handles.values()]
+      .filter((handle) => handle.slot < requiredCount && !!handle.ref && handle.ref.closed)
+      .map((handle) => handle.id)
+  }
+
   focusWindow(id: string): boolean {
     const handle = this.handles.get(id)
     if (!handle?.ref || handle.ref.closed) {
