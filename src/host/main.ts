@@ -8,7 +8,6 @@ import type { GameSnapshot } from '../shared/types'
 import { WindowManager } from './windowManager'
 
 const startButton = must<HTMLButtonElement>('start-button')
-const recallButton = must<HTMLButtonElement>('recall-button')
 const respawnButton = must<HTMLButtonElement>('respawn-button')
 const stopButton = must<HTMLButtonElement>('stop-button')
 const warning = must<HTMLParagraphElement>('host-warning')
@@ -94,6 +93,11 @@ ticker.onmessage = (event: MessageEvent<{ type: 'tick'; now: number }>) => {
 }
 
 startButton.addEventListener('click', () => {
+  if (hasStarted && windowManager.getOpenCount() > 0) {
+    recallGameWindows()
+    return
+  }
+
   const snapshot = engine.getSnapshot()
   const initialLevel = snapshot.selectedLevel
   const initialWindowCount = getDifficultyForLevel(initialLevel).activeWindows
@@ -126,10 +130,6 @@ startButton.addEventListener('click', () => {
 
 respawnButton.addEventListener('click', () => {
   engine.respawnBall()
-})
-
-recallButton.addEventListener('click', () => {
-  recallGameWindows()
 })
 
 stopButton.addEventListener('click', () => {
@@ -194,7 +194,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     lastSizeEnforceAt = 0
     lastLayoutKey = ''
     awaitingFreshBoundsSince = 0
-    readinessWarning = 'Campaign complete. Windows cleared. Choose any unlocked level and arm field to replay.'
+    readinessWarning = 'Campaign complete. Windows cleared. Choose any unlocked level and start the game to replay.'
     windowManager.closeAll()
   }
 
@@ -226,12 +226,12 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   bestStreakValue.textContent = String(snapshot.bestStreak)
   levelValue.textContent = `${snapshot.selectedLevel} / ${MAX_LEVEL}`
   windowCountValue.textContent = `${snapshot.availableWindowCount} / ${snapshot.requiredWindowCount}`
-  recallButton.disabled = !hasStarted || windowManager.getOpenCount() === 0
+  startButton.textContent = hasStarted && windowManager.getOpenCount() > 0 ? 'Resume Game' : 'Start Game'
   stopButton.textContent = 'End Session'
 
   statusText.textContent = hasStarted
     ? snapshot.note
-    : 'Idle. Allow popups, then arm the field to open the signal windows.'
+    : 'Idle. Allow popups, then start the game to open the signal windows.'
   detailNote.textContent = [
     `Game windows open: ${windowManager.getOpenCount()} / ${snapshot.requiredWindowCount}.`,
     `Registered windows: ${registeredCount}.`,
@@ -281,7 +281,7 @@ function renderWarnings(): void {
   }
 
   if (!readinessWarning && hasStarted) {
-    warnings.push('Use Recall Windows or click any game window to recall the cluster. Route the signal through each live relay before the goal unlocks.')
+    warnings.push('Use Resume Game or click any game window to recall the cluster. Route the signal through each live relay before the goal unlocks.')
   }
 
   warning.hidden = warnings.length === 0

@@ -32,11 +32,11 @@ npm run dev
 
 Open the host page, then:
 
-1. Click `Arm Field`.
+1. Click `Start Game`.
 2. Allow popups for the site.
 3. Move rooms so the ball can bridge from the start room through each relay room in order.
 4. Route the ball into the final goal target.
-5. Use `Recall Windows` on the control deck if the popup cluster falls behind other windows.
+5. Use `Resume Game` on the control deck if the popup cluster falls behind other windows.
 
 Useful commands:
 
@@ -55,8 +55,8 @@ The ball is simulated in desktop coordinates, but it is constrained by the live 
 
 ## Controls
 
-- `Arm Field`: open or relayout the popup rooms for the selected level and start the simulation
-- `Recall Windows`: bring the popup cluster back to the front, prioritizing the room that currently owns the ball
+- `Start Game`: open or relayout the popup rooms for the selected level and start the simulation
+- `Resume Game`: same primary button while a session is active; brings the popup cluster back to the front and prioritizes the room that currently owns the ball
 - `Reseed Target`: respawn the route targets and signal ball for the current level
 - `End Session`: close spawned game windows and reset campaign progress
 - Click any popup room: recall the cluster to the front
