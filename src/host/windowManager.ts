@@ -87,7 +87,11 @@ const RELAYOUT_SCALES = [1, 0.94, 0.88, 0.82]
 export class WindowManager {
   private readonly handles = new Map<string, PopupHandle>()
 
-  constructor(private readonly hostWindow: Window) {}
+  constructor(
+    private readonly hostWindow: Window,
+    private readonly channelName: string,
+    private readonly sessionId: string,
+  ) {}
 
   ensureWindowPool(count: number, level: number, options: LayoutOptions = {}): PopupHandle[] {
     const handles: PopupHandle[] = []
@@ -129,6 +133,8 @@ export class WindowManager {
       }
 
       const url = new URL('./client.html', this.hostWindow.location.href)
+      url.searchParams.set('channel', this.channelName)
+      url.searchParams.set('session', this.sessionId)
       url.searchParams.set('id', id)
       url.searchParams.set('slot', String(slot))
       url.searchParams.set('title', title)

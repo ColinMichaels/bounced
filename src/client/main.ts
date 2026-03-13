@@ -1,12 +1,14 @@
 import '../styles/app.css'
 
 import { BOUNDS_HEARTBEAT_MS } from '../shared/constants'
-import { openGameChannel } from '../network/channel'
+import { createGameChannelName, openGameChannel } from '../network/channel'
 import type { GameMessage } from '../shared/messages'
 import type { GameSnapshot, WindowBoundsPayload } from '../shared/types'
 import { BallRenderer } from './renderer'
 
 const search = new URLSearchParams(window.location.search)
+const sessionId = search.get('session') ?? 'default'
+const channelName = search.get('channel') ?? createGameChannelName(sessionId)
 const windowId = search.get('id') ?? `play-window-${Math.random().toString(36).slice(2, 8)}`
 const slot = Number(search.get('slot') ?? '0')
 const title = search.get('title') ?? `Room ${slot + 1}`
@@ -23,7 +25,7 @@ titleElement.textContent = roomLabel
 document.title = title
 
 const renderer = new BallRenderer(canvas)
-const channel = openGameChannel(handleMessage)
+const channel = openGameChannel(channelName, handleMessage)
 const resizeObserver = new ResizeObserver(() => {
   reportBounds()
 })

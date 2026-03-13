@@ -2,7 +2,7 @@ import '../styles/app.css'
 
 import { GameEngine } from '../engine/gameEngine'
 import { DIFFICULTY_LEVELS, getDifficultyForLevel, MAX_LEVEL } from '../engine/difficulty'
-import { openGameChannel } from '../network/channel'
+import { createGameChannelName, openGameChannel } from '../network/channel'
 import type { GameMessage } from '../shared/messages'
 import type { GameSnapshot } from '../shared/types'
 import { ProgressStorage } from './progressStorage'
@@ -23,10 +23,12 @@ const windowCountValue = must<HTMLElement>('window-count-value')
 const windowList = must<HTMLUListElement>('window-list')
 const hostShell = document.body
 
-const channel = openGameChannel(handleMessage)
+const sessionId = createSessionId()
+const channelName = createGameChannelName(sessionId)
+const channel = openGameChannel(channelName, handleMessage)
 const engine = new GameEngine(channel)
 const progressStorage = new ProgressStorage(window.localStorage)
-const windowManager = new WindowManager(window)
+const windowManager = new WindowManager(window, channelName, sessionId)
 const ticker = new Worker(new URL('./ticker.worker.ts', import.meta.url), { type: 'module' })
 const MAX_LEVEL_WINDOWS = Math.max(...DIFFICULTY_LEVELS.map((level) => level.activeWindows))
 const MAX_LEVEL_RELAYS = Math.max(...DIFFICULTY_LEVELS.map((level) => Math.max(1, level.activeWindows - 2)))
@@ -425,4 +427,12 @@ function hasFreshWindowBounds(snapshot: GameSnapshot, since: number): boolean {
 function syncDeckPresentation(): void {
   hostShell.dataset.sessionState = hasStarted ? 'armed' : 'idle'
   hostShell.dataset.deckFocus = hasStarted && !hostHasFocus ? 'background' : 'foreground'
+}
+
+function createSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }

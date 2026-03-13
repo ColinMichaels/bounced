@@ -7,11 +7,14 @@ export interface GameChannel {
   close: () => void
 }
 
-export function openGameChannel(onMessage: (message: GameMessage) => void): GameChannel {
-  const channel = new BroadcastChannel(CHANNEL_NAME)
+export function openGameChannel(
+  channelName: string,
+  onMessage: (message: GameMessage) => void,
+): GameChannel {
+  const channel = new BroadcastChannel(channelName)
 
-  channel.onmessage = (event: MessageEvent<GameMessage>) => {
-    if (!event.data || typeof event.data.type !== 'string') {
+  channel.onmessage = (event: MessageEvent<unknown>) => {
+    if (!isGameMessage(event.data)) {
       return
     }
 
@@ -27,4 +30,17 @@ export function openGameChannel(onMessage: (message: GameMessage) => void): Game
       channel.close()
     },
   }
+}
+
+export function createGameChannelName(sessionId: string): string {
+  return `${CHANNEL_NAME}:${sessionId}`
+}
+
+function isGameMessage(value: unknown): value is GameMessage {
+  return (
+    !!value
+    && typeof value === 'object'
+    && 'type' in value
+    && typeof value.type === 'string'
+  )
 }
