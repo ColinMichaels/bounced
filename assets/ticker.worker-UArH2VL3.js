@@ -1,0 +1,1 @@
+(function(){setInterval(()=>{self.postMessage({type:`tick`,now:Date.now()})},16)})();

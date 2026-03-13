@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ball Hunt Host</title>
+    <script type="module" crossorigin src="/bounced/assets/host-DtStM_ia.js"></script>
+    <link rel="modulepreload" crossorigin href="/bounced/assets/channel-q9UxGl6u.js">
+    <link rel="stylesheet" crossorigin href="/bounced/assets/channel-CRKhR66V.css">
+  </head>
+  <body class="host-shell">
+    <main class="host-app">
+      <section class="hero">
+        <p class="eyebrow">BroadcastChannel Array</p>
+        <h1>Signal Hunt Control Deck</h1>
+        <p class="lede">
+          One clock. One moving target. A distributed window field you can recall and follow.
+        </p>
+      </section>
+
+      <section class="control-panel">
+        <div class="button-row">
+          <button id="start-button" class="primary">Arm Field</button>
+          <button id="recall-button">Recall Windows</button>
+          <button id="respawn-button">Reseed Target</button>
+          <button id="stop-button">End Session</button>
+        </div>
+        <div id="level-select" class="level-select" aria-label="Level Select"></div>
+        <p id="host-warning" class="warning" hidden>
+          Use Recall Windows or click any game window to recall the cluster.
+        </p>
+        <p id="status-text" class="status-text">Idle. Arm the field to open the signal windows.</p>
+      </section>
+
+      <section class="scoreboard">
+        <article>
+          <span class="label">Score</span>
+          <strong id="score-value">0</strong>
+        </article>
+        <article>
+          <span class="label">Streak</span>
+          <strong id="streak-value">0</strong>
+        </article>
+        <article>
+          <span class="label">Best</span>
+          <strong id="best-streak-value">0</strong>
+        </article>
+        <article>
+          <span class="label">Level</span>
+          <strong id="level-value">1 / 8</strong>
+        </article>
+        <article>
+          <span class="label">Playable Windows</span>
+          <strong id="window-count-value">0 / 3</strong>
+        </article>
+      </section>
+
+      <section class="detail-grid">
+        <article class="panel">
+          <h2>Signal</h2>
+          <p id="detail-note">
+            Each level now runs start -> ordered relay windows -> final goal.
+          </p>
+        </article>
+        <article class="panel">
+          <h2>Signal Windows</h2>
+          <ul id="window-list" class="window-list">
+            <li>Waiting for play windows.</li>
+          </ul>
+        </article>
+      </section>
+    </main>
+
+  </body>
+</html>
