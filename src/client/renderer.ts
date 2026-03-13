@@ -1,5 +1,5 @@
 import { pointInRect, rectFromWindow } from '../shared/geometry'
-import type { BallState, GameSnapshot, RouteWindowState, WindowBoundsPayload } from '../shared/types'
+import type { BallState, GameSnapshot, ObstacleState, RouteWindowState, WindowBoundsPayload } from '../shared/types'
 
 interface TrailPoint {
   x: number
@@ -75,9 +75,12 @@ export class BallRenderer {
     }
 
     this.drawImpactFlashes()
+    const obstacles = snapshot.obstacles.filter((obstacle) => obstacle.windowId === bounds.id && !obstacle.destroyed)
+    this.drawObstacles(obstacles, bounds)
 
     if (snapshot.balls.length === 0) {
       this.drawTarget(snapshot, bounds)
+      this.drawScoreNode(snapshot, bounds)
       this.decayEffects()
       this.syncPreviousBalls(snapshot.balls)
       return
@@ -85,6 +88,7 @@ export class BallRenderer {
 
     const windowRect = rectFromWindow(bounds)
     this.drawTarget(snapshot, bounds)
+    this.drawScoreNode(snapshot, bounds)
     const visibleBalls = snapshot.balls.filter((ball) => pointInRect(ball.x, ball.y, windowRect))
     if (visibleBalls.length === 0) {
       this.decayEffects()
@@ -227,6 +231,54 @@ export class BallRenderer {
     this.context.restore()
   }
 
+  private drawObstacles(obstacles: ObstacleState[], bounds: WindowBoundsPayload): void {
+    if (obstacles.length === 0) {
+      return
+    }
+
+    this.context.save()
+
+    for (const obstacle of obstacles) {
+      const localX = obstacle.x - bounds.contentX
+      const localY = obstacle.y - bounds.contentY
+      const stripeOffset = (obstacle.width + obstacle.height) % 14
+
+      this.context.fillStyle = 'rgba(12, 22, 34, 0.9)'
+      this.context.strokeStyle = 'rgba(108, 239, 255, 0.22)'
+      this.context.lineWidth = 1.5
+      this.context.shadowBlur = 10
+      this.context.shadowColor = 'rgba(108, 239, 255, 0.12)'
+      this.context.beginPath()
+      this.context.roundRect(localX, localY, obstacle.width, obstacle.height, 10)
+      this.context.fill()
+      this.context.stroke()
+
+      this.context.shadowBlur = 0
+      this.context.save()
+      this.context.beginPath()
+      this.context.roundRect(localX, localY, obstacle.width, obstacle.height, 10)
+      this.context.clip()
+      this.context.strokeStyle = 'rgba(147, 247, 255, 0.14)'
+      this.context.lineWidth = 2
+
+      for (let stripeX = localX - obstacle.height + stripeOffset; stripeX < localX + obstacle.width + obstacle.height; stripeX += 12) {
+        this.context.beginPath()
+        this.context.moveTo(stripeX, localY + obstacle.height)
+        this.context.lineTo(stripeX + obstacle.height, localY)
+        this.context.stroke()
+      }
+
+      this.context.restore()
+
+      this.context.fillStyle = 'rgba(216, 248, 255, 0.12)'
+      this.context.beginPath()
+      this.context.roundRect(localX + 4, localY + 4, Math.max(0, obstacle.width - 8), Math.max(0, obstacle.height * 0.18), 6)
+      this.context.fill()
+    }
+
+    this.context.restore()
+  }
+
   private maybeSpawnImpact(previousBall: BallState | undefined, ball: BallState, x: number, y: number): void {
     if (!previousBall) {
       return
@@ -263,7 +315,14 @@ export class BallRenderer {
     nextSnapshot: GameSnapshot,
     bounds: WindowBoundsPayload | null,
   ): void {
-    if (!previousSnapshot || !bounds || previousSnapshot.phase !== 'running' || nextSnapshot.phase === 'idle') {
+    if (!previousSnapshot || !bounds) {
+      return
+    }
+
+    this.handleObstacleTransition(previousSnapshot, nextSnapshot, bounds)
+    this.handleScoreNodeTransition(previousSnapshot, nextSnapshot, bounds)
+
+    if (previousSnapshot.phase !== 'running' || nextSnapshot.phase === 'idle') {
       return
     }
 
@@ -297,6 +356,76 @@ export class BallRenderer {
       variant: 'completion',
     })
     this.impactFlashes.length = Math.min(this.impactFlashes.length, IMPACT_MAX_FLASHES)
+  }
+
+  private spawnScoreFlash(x: number, y: number, radius: number): void {
+    this.impactFlashes.unshift({
+      x,
+      y,
+      life: 1,
+      hue: 118,
+      radius: radius + 8,
+      variant: 'completion',
+    })
+    this.impactFlashes.length = Math.min(this.impactFlashes.length, IMPACT_MAX_FLASHES)
+  }
+
+  private handleObstacleTransition(
+    previousSnapshot: GameSnapshot,
+    nextSnapshot: GameSnapshot,
+    bounds: WindowBoundsPayload,
+  ): void {
+    const previousObstacles = previousSnapshot.obstacles.filter((obstacle) => obstacle.windowId === bounds.id)
+    if (previousObstacles.length === 0) {
+      return
+    }
+
+    for (const previousObstacle of previousObstacles) {
+      const nextObstacle = nextSnapshot.obstacles.find((obstacle) => obstacle.id === previousObstacle.id)
+      if (!nextObstacle || nextObstacle.hitPoints >= previousObstacle.hitPoints) {
+        continue
+      }
+
+      const centerX = previousObstacle.x - bounds.contentX + (previousObstacle.width / 2)
+      const centerY = previousObstacle.y - bounds.contentY + (previousObstacle.height / 2)
+      const radius = Math.max(previousObstacle.width, previousObstacle.height) * 0.32
+
+      this.impactFlashes.unshift({
+        x: centerX,
+        y: centerY,
+        life: 1,
+        hue: nextObstacle.destroyed ? 182 : 24,
+        radius,
+        variant: nextObstacle.destroyed ? 'completion' : 'impact',
+      })
+    }
+
+    this.impactFlashes.length = Math.min(this.impactFlashes.length, IMPACT_MAX_FLASHES)
+  }
+
+  private handleScoreNodeTransition(
+    previousSnapshot: GameSnapshot,
+    nextSnapshot: GameSnapshot,
+    bounds: WindowBoundsPayload,
+  ): void {
+    const previousScoreNode = previousSnapshot.activeScoreNode
+    if (!previousScoreNode || previousScoreNode.windowId !== bounds.id) {
+      return
+    }
+
+    const nextScoreNode = nextSnapshot.activeScoreNode
+    const collectedHere = nextSnapshot.score > previousSnapshot.score
+      && (!nextScoreNode || nextScoreNode.windowId !== bounds.id)
+
+    if (!collectedHere) {
+      return
+    }
+
+    this.spawnScoreFlash(
+      previousScoreNode.x - bounds.contentX,
+      previousScoreNode.y - bounds.contentY,
+      previousScoreNode.radius,
+    )
   }
 
   private drawImpactFlashes(): void {
@@ -390,6 +519,8 @@ export class BallRenderer {
     const radius = snapshot.activeTarget.radius
     const isGoal = snapshot.activeTarget.kind === 'goal'
 
+    this.context.save()
+
     this.context.beginPath()
     this.context.strokeStyle = isGoal ? 'rgba(255, 214, 122, 0.92)' : 'rgba(108, 239, 255, 0.92)'
     this.context.lineWidth = 2
@@ -411,6 +542,57 @@ export class BallRenderer {
     this.context.font = '600 11px "SF Mono", "IBM Plex Mono", monospace'
     this.context.textAlign = 'center'
     this.context.fillText(snapshot.activeTarget.label, x, y + 4)
+    this.context.restore()
+  }
+
+  private drawScoreNode(snapshot: GameSnapshot, bounds: WindowBoundsPayload): void {
+    if (!snapshot.activeScoreNode || snapshot.activeScoreNode.windowId !== bounds.id) {
+      return
+    }
+
+    const x = snapshot.activeScoreNode.x - bounds.contentX
+    const y = snapshot.activeScoreNode.y - bounds.contentY
+    const radius = snapshot.activeScoreNode.radius
+    const pulse = 0.72 + (((Math.sin(Date.now() / 240) + 1) * 0.5) * 0.28)
+
+    this.context.save()
+    this.context.translate(x, y)
+
+    this.context.beginPath()
+    this.context.fillStyle = `rgba(118, 255, 176, ${0.12 * pulse})`
+    this.context.shadowBlur = 18
+    this.context.shadowColor = 'rgba(118, 255, 176, 0.32)'
+    this.context.arc(0, 0, radius + 10, 0, Math.PI * 2)
+    this.context.fill()
+
+    this.context.shadowBlur = 0
+    this.context.beginPath()
+    this.context.moveTo(0, -radius - 6)
+    this.context.lineTo(radius + 6, 0)
+    this.context.lineTo(0, radius + 6)
+    this.context.lineTo(-radius - 6, 0)
+    this.context.closePath()
+    this.context.fillStyle = 'rgba(118, 255, 176, 0.16)'
+    this.context.strokeStyle = 'rgba(168, 255, 206, 0.92)'
+    this.context.lineWidth = 2
+    this.context.fill()
+    this.context.stroke()
+
+    this.context.beginPath()
+    this.context.moveTo(0, -radius + 2)
+    this.context.lineTo(radius - 2, 0)
+    this.context.lineTo(0, radius - 2)
+    this.context.lineTo(-radius + 2, 0)
+    this.context.closePath()
+    this.context.fillStyle = 'rgba(12, 30, 22, 0.88)'
+    this.context.fill()
+
+    this.context.fillStyle = 'rgba(220, 255, 233, 0.96)'
+    this.context.font = '700 11px "SF Mono", "IBM Plex Mono", monospace'
+    this.context.textAlign = 'center'
+    this.context.fillText(snapshot.activeScoreNode.label, 0, 4)
+
+    this.context.restore()
   }
 
   private getRouteTint(routeWindow: RouteWindowState | null): string | null {

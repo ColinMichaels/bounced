@@ -1,5 +1,5 @@
 import { WINDOW_GRID_COLUMNS } from './constants'
-import type { Rect, WindowBoundsPayload, WindowState } from './types'
+import type { ObstacleState, Rect, WindowBoundsPayload, WindowState } from './types'
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -13,6 +13,17 @@ export function rectFromWindow(windowState: WindowBoundsPayload | WindowState): 
     bottom: windowState.contentY + windowState.contentHeight,
     width: windowState.contentWidth,
     height: windowState.contentHeight,
+  }
+}
+
+export function rectFromObstacle(obstacle: ObstacleState): Rect {
+  return {
+    left: obstacle.x,
+    top: obstacle.y,
+    right: obstacle.x + obstacle.width,
+    bottom: obstacle.y + obstacle.height,
+    width: obstacle.width,
+    height: obstacle.height,
   }
 }
 
@@ -42,6 +53,12 @@ export function combineRects(rects: Rect[]): Rect | null {
 
 export function pointInRect(x: number, y: number, rect: Rect): boolean {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+}
+
+export function pointInObstacle(x: number, y: number, obstacles: ObstacleState[]): boolean {
+  return obstacles
+    .filter((obstacle) => !obstacle.destroyed)
+    .some((obstacle) => pointInRect(x, y, rectFromObstacle(obstacle)))
 }
 
 export function pointInWindowUnion<T extends WindowBoundsPayload | WindowState>(
@@ -125,6 +142,15 @@ export function pointInCircle(
 ): boolean {
   const dx = pointX - centerX
   const dy = pointY - centerY
+  return (dx * dx) + (dy * dy) <= radius * radius
+}
+
+export function circleIntersectsRect(centerX: number, centerY: number, radius: number, rect: Rect): boolean {
+  const closestX = clamp(centerX, rect.left, rect.right)
+  const closestY = clamp(centerY, rect.top, rect.bottom)
+  const dx = centerX - closestX
+  const dy = centerY - closestY
+
   return (dx * dx) + (dy * dy) <= radius * radius
 }
 

@@ -11,55 +11,66 @@ Implemented now:
 - random disconnected room layouts per level
 - custom connectivity-based ball physics
 - ordered `start -> relay -> goal` progression
+- static barrier obstacles in relay / goal rooms
+- click-to-shoot barrier clearing
+- optional score nodes in cleared relay rooms
 - campaign unlock flow across 8 levels
 - compact host and popup UI
 
 Not implemented yet:
 
-- obstacles
-- shooting
-- score targets after room clearing
 - upgrades / abilities
 - blocked room sides
 - decoys / multiple active balls as a real mode
 
 ## Near-Term TODO
 
-### 1. Obstacles and room clearing
+### 1. Obstacle clearing and room control
 
 Goal:
 
-- place blocker objects inside relay or goal rooms
-- force the player to actively clear a route, not only move windows
+- turn the new room barriers into a gameplay system players can actively clear
+- force the player to do more than only move windows
 
-Planned shape:
+Current state:
 
-- add obstacle arrays to the authoritative snapshot
-- associate obstacles with specific rooms
-- treat uncleared obstacles as blockers for routing or target access
+- barriers now exist as authoritative snapshot objects
+- barriers are rendered in relay / goal rooms
+- barriers now act as internal collision geometry for the ball
+
+Next shape:
+
+- let player actions destroy or disable barriers
+- track per-barrier durability / cleared state over time
+- gate route or score events on room-clearing state
 
 ### 2. Shooting mechanic
 
 Goal:
 
-- turn room click input into a real gameplay action
+- deepen the now-working shot mechanic with pacing and strategy
 
 Current state:
 
-- popup rooms already forward click data to the host
-- `catch_attempt` is reserved as the current input channel
+- popup room clicks now destroy barriers
+- room objectives stay live while barriers remain physical blockers
 
 Planned shape:
 
-- reinterpret click input as a shot
-- raycast or local hit-test against room obstacles
 - add cooldown, shot feedback, and destruction effects
+- add richer barrier durability patterns
+- add upgrades or alternate shot behaviors
 
 ### 3. Score / upgrade targets
 
 Goal:
 
 - reward room clearing before the level-end goal
+
+Current state:
+
+- the active relay room now spawns an optional score node once its barriers are cleared
+- routing the ball through that node grants score without replacing relay completion
 
 Planned shape:
 
@@ -193,10 +204,9 @@ These still need real playtesting rather than speculation:
 
 ## Recommended Build Order
 
-1. Add obstacle data model and rendering.
-2. Convert popup clicks into an actual shot action.
-3. Add destructible blockers and room-clear states.
-4. Spawn score / upgrade targets after blockers are cleared.
-5. Add room-side locks.
-6. Add first helper ability.
-7. Rebalance levels around the new systems.
+1. Convert popup clicks into an actual shot action.
+2. Add destructible blockers and room-clear states.
+3. Spawn score / upgrade targets after blockers are cleared.
+4. Add room-side locks.
+5. Add first helper ability.
+6. Rebalance levels around the new systems.

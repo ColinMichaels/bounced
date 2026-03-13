@@ -1,15 +1,18 @@
-import { MAX_DELTA_MS, WINDOW_STALE_MS } from '../shared/constants'
+import { MAX_DELTA_MS, SHOT_COOLDOWN_MS, SHOT_HIT_PADDING_PX, WINDOW_STALE_MS } from '../shared/constants'
 import { clamp, findContainingWindow, getConnectedWindows, pointInCircle, rectFromWindow, sortWindowsBySlot } from '../shared/geometry'
 import type { GameChannel } from '../network/channel'
 import { getDifficultyForLevel, MAX_LEVEL } from './difficulty'
 import { advanceBall, createBall, retuneBall, stabilizeBall } from './physics'
 import type {
   BallState,
+  CatchAttemptPayload,
   DifficultyLevel,
   GamePhase,
   GameSnapshot,
+  ObstacleState,
   PlayerProgressState,
   RouteWindowState,
+  ScoreNodeState,
   TargetState,
   WindowBoundsPayload,
   WindowState,
@@ -22,6 +25,27 @@ interface GoalAnchor {
   v: number
 }
 
+interface ObstacleAnchor {
+  id: string
+  kind: 'barrier'
+  u: number
+  v: number
+  width: number
+  height: number
+  hitPoints: number
+}
+
+const OBSTACLE_TEMPLATES: ObstacleAnchor[] = [
+  { id: 'gate-v-left', kind: 'barrier', u: 0.34, v: 0.5, width: 0.17, height: 0.54, hitPoints: 1 },
+  { id: 'gate-v-right', kind: 'barrier', u: 0.66, v: 0.5, width: 0.17, height: 0.54, hitPoints: 1 },
+  { id: 'gate-h-top', kind: 'barrier', u: 0.5, v: 0.34, width: 0.56, height: 0.17, hitPoints: 1 },
+  { id: 'gate-h-bottom', kind: 'barrier', u: 0.5, v: 0.66, width: 0.56, height: 0.17, hitPoints: 1 },
+  { id: 'pillar-center', kind: 'barrier', u: 0.5, v: 0.5, width: 0.22, height: 0.22, hitPoints: 1 },
+  { id: 'pillar-upper', kind: 'barrier', u: 0.5, v: 0.28, width: 0.2, height: 0.2, hitPoints: 1 },
+  { id: 'pillar-lower', kind: 'barrier', u: 0.5, v: 0.72, width: 0.2, height: 0.2, hitPoints: 1 },
+]
+const SCORE_NODE_VALUE = 1
+
 export class GameEngine {
   private readonly windows = new Map<string, WindowState>()
   private readonly listeners = new Set<SnapshotListener>()
@@ -29,6 +53,12 @@ export class GameEngine {
 
   private balls: BallState[] = []
   private targetAnchors: GoalAnchor[] = []
+  private scoreNodeAnchors = new Map<string, GoalAnchor>()
+  private obstacleAnchors = new Map<string, ObstacleAnchor[]>()
+  private obstacleHitPoints = new Map<string, number>()
+  private claimedScoreNodeWindowIds = new Set<string>()
+  private expiredScoreNodeWindowIds = new Set<string>()
+  private enteredScoreNodeWindowIds = new Set<string>()
   private currentRouteStep = 0
   private score = 0
   private streak = 0
@@ -40,6 +70,7 @@ export class GameEngine {
   private phase: GamePhase = 'idle'
   private note = 'Idle. Arm the field to begin at level 1.'
   private lastStepAt = 0
+  private lastShotAt = 0
 
   constructor(channel: GameChannel) {
     this.channel = channel
@@ -99,6 +130,8 @@ export class GameEngine {
     const difficulty = getDifficultyForLevel(this.currentLevel)
     const playableWindows = this.getPlayableWindows(registeredWindows)
     const activeWindows = this.getActiveWindows(difficulty.activeWindows, playableWindows)
+    const obstacles = this.getObstacles(activeWindows)
+    const activeTarget = this.getActiveTargetState(activeWindows, difficulty, obstacles)
     const routeWindowIds = activeWindows.map((windowState) => windowState.id)
     const startWindowId = routeWindowIds[0] ?? null
     const bridgeWindowIds = routeWindowIds.slice(1, -1)
@@ -124,7 +157,9 @@ export class GameEngine {
       completedBridgeWindowIds,
       goalWindowId: routeWindowIds[routeWindowIds.length - 1] ?? null,
       routeWindows: this.getRouteWindowStates(activeWindows),
-      activeTarget: this.getActiveTargetState(activeWindows, difficulty),
+      activeTarget,
+      activeScoreNode: this.getActiveScoreNodeState(activeWindows, difficulty, obstacles, activeTarget),
+      obstacles,
       windows: registeredWindows,
       balls: this.balls,
       ball: this.balls.find((ball) => ball.ownerWindowId) ?? this.balls[0] ?? null,
@@ -143,13 +178,13 @@ export class GameEngine {
     this.emitSnapshot()
   }
 
-  endGame(): void {
+  endGame(prefix = 'Session ended.'): void {
     this.balls = []
     this.resetRouteState()
     this.phase = 'idle'
     this.streak = 0
     this.tick = 0
-    this.note = this.getIdleNote('Session ended.')
+    this.note = this.getIdleNote(prefix)
     this.windows.clear()
     this.emitSnapshot()
   }
@@ -187,8 +222,8 @@ export class GameEngine {
       return
     }
 
-    this.initializeRouteTargets(activeWindows)
-    this.balls = this.createBallSet(activeWindows, difficulty)
+    this.initializeRouteTargets(activeWindows, difficulty)
+    this.balls = this.createBallSet(activeWindows, difficulty, this.getObstacles(activeWindows))
     this.phase = 'running'
     this.note = this.getRoundIntro(activeWindows)
     this.emitSnapshot()
@@ -207,8 +242,46 @@ export class GameEngine {
     this.emitSnapshot()
   }
 
-  handleCatchAttempt(_payload?: unknown): void {
-    // Reserved for the upcoming firing/barrier mechanic. Routing into relays and the goal scores for now.
+  handleCatchAttempt(payload?: CatchAttemptPayload): void {
+    if (!isCatchAttemptPayload(payload) || this.phase !== 'running') {
+      return
+    }
+
+    const now = Date.now()
+    if (now - this.lastShotAt < SHOT_COOLDOWN_MS) {
+      return
+    }
+
+    const difficulty = getDifficultyForLevel(this.currentLevel)
+    const activeWindows = this.getActiveWindows(difficulty.activeWindows)
+    const obstacles = this.getObstacles(activeWindows)
+    const clickedWindow = activeWindows.find((windowState) => windowState.id === payload.id)
+    if (!clickedWindow) {
+      return
+    }
+
+    this.lastShotAt = now
+
+    const obstacle = obstacles
+      .filter((entry) => entry.windowId === clickedWindow.id && !entry.destroyed)
+      .find((entry) => this.shotHitsObstacle(payload, entry))
+
+    if (obstacle) {
+      const nextHitPoints = Math.max(0, obstacle.hitPoints - 1)
+      this.obstacleHitPoints.set(obstacle.id, nextHitPoints)
+
+      const remainingRoomBarriers = this.getObstacles(activeWindows)
+        .filter((entry) => entry.windowId === clickedWindow.id && !entry.destroyed)
+        .length
+
+      this.note = remainingRoomBarriers > 0
+        ? `${clickedWindow.title} barrier hit. ${remainingRoomBarriers} barrier${remainingRoomBarriers === 1 ? '' : 's'} still active.`
+        : `${clickedWindow.title} cleared. Objective path opened.`
+
+      this.emitSnapshot()
+      return
+    }
+
   }
 
   step(now: number): void {
@@ -228,17 +301,18 @@ export class GameEngine {
     }
 
     if (this.targetAnchors.length !== Math.max(0, activeWindows.length - 1)) {
-      this.initializeRouteTargets(activeWindows)
+      this.initializeRouteTargets(activeWindows, difficulty)
     }
 
-    const activeTarget = this.getActiveTargetState(activeWindows, difficulty)
+    const obstacles = this.getObstacles(activeWindows)
+    const activeTarget = this.getActiveTargetState(activeWindows, difficulty, obstacles)
     if (this.phase !== 'running') {
       this.phase = 'running'
       this.note = this.getRoundIntro(activeWindows)
     }
 
     if (this.balls.length === 0) {
-      this.balls = this.createBallSet(activeWindows, difficulty)
+      this.balls = this.createBallSet(activeWindows, difficulty, obstacles)
       this.lastStepAt = now
       this.emitSnapshot()
       return
@@ -251,12 +325,15 @@ export class GameEngine {
         ?? activeWindows.find((windowState) => windowState.id === ball.ownerWindowId)
         ?? activeWindows[0]
       const motionWindows = getConnectedWindows(activeWindows, seedWindow.id)
+      const motionObstacles = obstacles.filter((obstacle) =>
+        motionWindows.some((windowState) => windowState.id === obstacle.windowId),
+      )
       const tunedBall = retuneBall(ball, difficulty)
       const stabilizedBall = stabilizeBall({
         ...tunedBall,
         ownerWindowId: seedWindow.id,
-      }, motionWindows)
-      const advancedBall = advanceBall(stabilizedBall, motionWindows, deltaMs)
+      }, motionWindows, motionObstacles)
+      const advancedBall = advanceBall(stabilizedBall, motionWindows, motionObstacles, deltaMs)
 
       return {
         ...advancedBall,
@@ -264,6 +341,9 @@ export class GameEngine {
       }
     })
     this.tick += 1
+
+    const activeScoreNode = this.getActiveScoreNodeState(activeWindows, difficulty, obstacles, activeTarget)
+    this.resolveScoreNodeState(activeWindows, activeScoreNode)
 
     if (activeTarget) {
       const routeBall = this.balls.find((ball) =>
@@ -294,7 +374,7 @@ export class GameEngine {
 
     this.completedLevels.add(clearedLevel)
     if (!wasCompleted) {
-      this.score = this.completedLevels.size
+      this.score += 1
     }
     this.streak += 1
     this.bestStreak = Math.max(this.bestStreak, this.streak)
@@ -339,19 +419,75 @@ export class GameEngine {
       .sort((left, right) => left.slot - right.slot)
   }
 
-  private createBallSet(activeWindows: WindowState[], difficulty: DifficultyLevel): BallState[] {
+  private createBallSet(
+    activeWindows: WindowState[],
+    difficulty: DifficultyLevel,
+    obstacles: ObstacleState[],
+  ): BallState[] {
     const startWindow = activeWindows[0]
-    return startWindow ? [createBall([startWindow], difficulty)] : []
+    const startObstacles = startWindow
+      ? obstacles.filter((obstacle) => obstacle.windowId === startWindow.id)
+      : []
+
+    return startWindow ? [createBall([startWindow], difficulty, startObstacles)] : []
   }
 
-  private createGoalAnchor(): GoalAnchor {
+  private createGoalAnchor(
+    windowState: WindowState,
+    difficulty: DifficultyLevel,
+    obstacles: ObstacleState[],
+    isGoal: boolean,
+  ): GoalAnchor {
+    const rect = rectFromWindow(windowState)
+    const radius = isGoal
+      ? Math.max(18, difficulty.radius * 1.8)
+      : Math.max(16, difficulty.radius * 1.45)
+    const margin = radius + 18
+
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      const anchor = {
+        u: randomBetween(0.24, 0.76),
+        v: randomBetween(0.22, 0.78),
+      }
+      const x = clamp(rect.left + (rect.width * anchor.u), rect.left + margin, rect.right - margin)
+      const y = clamp(rect.top + (rect.height * anchor.v), rect.top + margin, rect.bottom - margin)
+
+      if (!obstacles.some((obstacle) => this.targetOverlapsObstacle(x, y, radius, obstacle))) {
+        return anchor
+      }
+    }
+
+    const fallbackAnchors: GoalAnchor[] = [
+      { u: 0.22, v: 0.22 },
+      { u: 0.78, v: 0.22 },
+      { u: 0.22, v: 0.78 },
+      { u: 0.78, v: 0.78 },
+      { u: 0.5, v: 0.2 },
+      { u: 0.5, v: 0.8 },
+      { u: 0.2, v: 0.5 },
+      { u: 0.8, v: 0.5 },
+    ]
+
+    for (const anchor of fallbackAnchors) {
+      const x = clamp(rect.left + (rect.width * anchor.u), rect.left + margin, rect.right - margin)
+      const y = clamp(rect.top + (rect.height * anchor.v), rect.top + margin, rect.bottom - margin)
+
+      if (!obstacles.some((obstacle) => this.targetOverlapsObstacle(x, y, radius, obstacle))) {
+        return anchor
+      }
+    }
+
     return {
-      u: randomBetween(0.24, 0.76),
-      v: randomBetween(0.22, 0.78),
+      u: 0.5,
+      v: 0.5,
     }
   }
 
-  private getActiveTargetState(activeWindows: WindowState[], difficulty: DifficultyLevel): TargetState | null {
+  private getActiveTargetState(
+    activeWindows: WindowState[],
+    difficulty: DifficultyLevel,
+    obstacles: ObstacleState[],
+  ): TargetState | null {
     if (this.targetAnchors.length === 0 || activeWindows.length < 2) {
       return null
     }
@@ -364,22 +500,43 @@ export class GameEngine {
     }
 
     const rect = rectFromWindow(targetWindow)
+    const roomObstacles = obstacles.filter((obstacle) => obstacle.windowId === targetWindow.id && !obstacle.destroyed)
     const isGoal = this.currentRouteStep >= targetWindows.length - 1
     const radius = isGoal
       ? Math.max(18, difficulty.radius * 1.8)
       : Math.max(16, difficulty.radius * 1.45)
     const margin = radius + 18
 
-    const x = clamp(
+    let x = clamp(
       rect.left + (rect.width * anchor.u),
       rect.left + margin,
       rect.right - margin,
     )
-    const y = clamp(
+    let y = clamp(
       rect.top + (rect.height * anchor.v),
       rect.top + margin,
       rect.bottom - margin,
     )
+
+    if (roomObstacles.some((obstacle) => this.targetOverlapsObstacle(x, y, radius, obstacle))) {
+      for (let attempt = 0; attempt < 32; attempt += 1) {
+        const nextAnchor = this.createGoalAnchor(targetWindow, difficulty, roomObstacles, isGoal)
+        x = clamp(
+          rect.left + (rect.width * nextAnchor.u),
+          rect.left + margin,
+          rect.right - margin,
+        )
+        y = clamp(
+          rect.top + (rect.height * nextAnchor.v),
+          rect.top + margin,
+          rect.bottom - margin,
+        )
+
+        if (!roomObstacles.some((obstacle) => this.targetOverlapsObstacle(x, y, radius, obstacle))) {
+          break
+        }
+      }
+    }
 
     return {
       kind: isGoal ? 'goal' : 'bridge',
@@ -391,14 +548,330 @@ export class GameEngine {
     }
   }
 
-  private initializeRouteTargets(activeWindows: WindowState[]): void {
+  private getActiveScoreNodeState(
+    activeWindows: WindowState[],
+    difficulty: DifficultyLevel,
+    obstacles: ObstacleState[],
+    activeTarget: TargetState | null,
+  ): ScoreNodeState | null {
+    if (!activeTarget || activeTarget.kind !== 'bridge') {
+      return null
+    }
+
+    const scoreWindowId = activeTarget.windowId
+    if (this.claimedScoreNodeWindowIds.has(scoreWindowId) || this.expiredScoreNodeWindowIds.has(scoreWindowId)) {
+      return null
+    }
+
+    const roomObstacles = obstacles.filter((obstacle) => obstacle.windowId === scoreWindowId && !obstacle.destroyed)
+    if (roomObstacles.length > 0) {
+      return null
+    }
+
+    const windowState = activeWindows.find((entry) => entry.id === scoreWindowId)
+    const anchor = windowState ? this.scoreNodeAnchors.get(scoreWindowId) : null
+    if (!windowState || !anchor) {
+      return null
+    }
+
+    const rect = rectFromWindow(windowState)
+    const radius = Math.max(12, difficulty.radius * 0.9)
+    const margin = radius + 18
+
+    return {
+      kind: 'score',
+      label: `+${SCORE_NODE_VALUE}`,
+      value: SCORE_NODE_VALUE,
+      windowId: scoreWindowId,
+      x: clamp(rect.left + (rect.width * anchor.u), rect.left + margin, rect.right - margin),
+      y: clamp(rect.top + (rect.height * anchor.v), rect.top + margin, rect.bottom - margin),
+      radius,
+    }
+  }
+
+  private initializeRouteTargets(activeWindows: WindowState[], difficulty: DifficultyLevel): void {
     this.currentRouteStep = 0
-    this.targetAnchors = Array.from({ length: Math.max(0, activeWindows.length - 1) }, () => this.createGoalAnchor())
+    this.obstacleAnchors = this.createObstacleAnchors(activeWindows, difficulty)
+    const obstacles = this.getObstacles(activeWindows)
+    const targetWindows = activeWindows.slice(1)
+
+    this.targetAnchors = targetWindows.map((windowState, index) => {
+      const isGoal = index === targetWindows.length - 1
+      const roomObstacles = obstacles.filter((obstacle) => obstacle.windowId === windowState.id && !obstacle.destroyed)
+      return this.createGoalAnchor(windowState, difficulty, roomObstacles, isGoal)
+    })
+
+    this.scoreNodeAnchors.clear()
+    activeWindows.slice(1, -1).forEach((windowState, index) => {
+      const roomObstacles = obstacles.filter((obstacle) => obstacle.windowId === windowState.id && !obstacle.destroyed)
+      const routeTarget = this.targetAnchors[index]
+      const scoreNodeAnchor = routeTarget
+        ? this.createScoreNodeAnchor(windowState, difficulty, roomObstacles, routeTarget)
+        : null
+
+      if (scoreNodeAnchor) {
+        this.scoreNodeAnchors.set(windowState.id, scoreNodeAnchor)
+      }
+    })
   }
 
   private resetRouteState(): void {
     this.currentRouteStep = 0
     this.targetAnchors = []
+    this.scoreNodeAnchors.clear()
+    this.obstacleAnchors.clear()
+    this.obstacleHitPoints.clear()
+    this.claimedScoreNodeWindowIds.clear()
+    this.expiredScoreNodeWindowIds.clear()
+    this.enteredScoreNodeWindowIds.clear()
+    this.lastShotAt = 0
+  }
+
+  private createScoreNodeAnchor(
+    windowState: WindowState,
+    difficulty: DifficultyLevel,
+    obstacles: ObstacleState[],
+    routeTargetAnchor: GoalAnchor,
+  ): GoalAnchor | null {
+    const rect = rectFromWindow(windowState)
+    const radius = Math.max(12, difficulty.radius * 0.9)
+    const targetRadius = Math.max(16, difficulty.radius * 1.45)
+    const margin = radius + 18
+    const targetX = clamp(rect.left + (rect.width * routeTargetAnchor.u), rect.left + targetRadius + 18, rect.right - targetRadius - 18)
+    const targetY = clamp(rect.top + (rect.height * routeTargetAnchor.v), rect.top + targetRadius + 18, rect.bottom - targetRadius - 18)
+
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      const anchor = {
+        u: randomBetween(0.2, 0.8),
+        v: randomBetween(0.2, 0.8),
+      }
+      const x = clamp(rect.left + (rect.width * anchor.u), rect.left + margin, rect.right - margin)
+      const y = clamp(rect.top + (rect.height * anchor.v), rect.top + margin, rect.bottom - margin)
+
+      if (
+        !obstacles.some((obstacle) => this.targetOverlapsObstacle(x, y, radius, obstacle))
+        && !this.circleOverlapsTarget(x, y, radius, targetX, targetY, targetRadius + 10)
+      ) {
+        return anchor
+      }
+    }
+
+    const fallbackAnchors: GoalAnchor[] = [
+      { u: 0.18, v: 0.18 },
+      { u: 0.82, v: 0.18 },
+      { u: 0.18, v: 0.82 },
+      { u: 0.82, v: 0.82 },
+      { u: 0.2, v: 0.5 },
+      { u: 0.8, v: 0.5 },
+    ]
+
+    for (const anchor of fallbackAnchors) {
+      const x = clamp(rect.left + (rect.width * anchor.u), rect.left + margin, rect.right - margin)
+      const y = clamp(rect.top + (rect.height * anchor.v), rect.top + margin, rect.bottom - margin)
+
+      if (
+        !obstacles.some((obstacle) => this.targetOverlapsObstacle(x, y, radius, obstacle))
+        && !this.circleOverlapsTarget(x, y, radius, targetX, targetY, targetRadius + 10)
+      ) {
+        return anchor
+      }
+    }
+
+    return null
+  }
+
+  private createObstacleAnchors(
+    activeWindows: WindowState[],
+    difficulty: DifficultyLevel,
+  ): Map<string, ObstacleAnchor[]> {
+    const anchors = new Map<string, ObstacleAnchor[]>()
+
+    activeWindows.forEach((windowState, index) => {
+      if (index === 0) {
+        anchors.set(windowState.id, [])
+        return
+      }
+
+      const isGoal = index === activeWindows.length - 1
+      const count = this.getObstacleCount(difficulty.level, isGoal)
+      const offset = (this.currentLevel * 3) + (windowState.slot * 5) + index
+
+      anchors.set(
+        windowState.id,
+        this.pickObstacleTemplates(count, offset).map((template, templateIndex) => ({
+          ...template,
+          id: `${windowState.id}-${template.id}-${templateIndex}`,
+        })),
+      )
+    })
+
+    return anchors
+  }
+
+  private getObstacleCount(level: number, isGoal: boolean): number {
+    if (isGoal) {
+      if (level >= 7) {
+        return 3
+      }
+
+      if (level >= 4) {
+        return 2
+      }
+
+      return 1
+    }
+
+    if (level >= 6) {
+      return 2
+    }
+
+    return 1
+  }
+
+  private pickObstacleTemplates(count: number, offset: number): ObstacleAnchor[] {
+    const orderedTemplates = OBSTACLE_TEMPLATES.map((_, index) =>
+      OBSTACLE_TEMPLATES[(index + offset) % OBSTACLE_TEMPLATES.length],
+    )
+
+    return this.pickTemplateCombination(orderedTemplates, count)
+  }
+
+  private pickTemplateCombination(orderedTemplates: ObstacleAnchor[], targetCount: number): ObstacleAnchor[] {
+    let best: ObstacleAnchor[] = []
+
+    const search = (index: number, selected: ObstacleAnchor[]): void => {
+      if (selected.length > best.length) {
+        best = [...selected]
+      }
+
+      if (selected.length >= targetCount || index >= orderedTemplates.length) {
+        return
+      }
+
+      const remaining = orderedTemplates.length - index
+      if (selected.length + remaining <= best.length) {
+        return
+      }
+
+      const candidate = orderedTemplates[index]
+      if (!selected.some((template) => this.templatesOverlap(template, candidate))) {
+        selected.push(candidate)
+        search(index + 1, selected)
+        selected.pop()
+      }
+
+      search(index + 1, selected)
+    }
+
+    search(0, [])
+    return best
+  }
+
+  private templatesOverlap(left: ObstacleAnchor, right: ObstacleAnchor): boolean {
+    return (
+      Math.abs(left.u - right.u) < ((left.width + right.width) * 0.55)
+      && Math.abs(left.v - right.v) < ((left.height + right.height) * 0.55)
+    )
+  }
+
+  private getObstacles(activeWindows: WindowState[]): ObstacleState[] {
+    return activeWindows.flatMap((windowState) => {
+      const anchors = this.obstacleAnchors.get(windowState.id) ?? []
+      const rect = rectFromWindow(windowState)
+      const minSize = 24
+
+      return anchors.map((anchor) => {
+        const width = Math.max(minSize, rect.width * anchor.width)
+        const height = Math.max(minSize, rect.height * anchor.height)
+        const hitPoints = Math.max(0, this.obstacleHitPoints.get(anchor.id) ?? anchor.hitPoints)
+        const x = clamp(
+          rect.left + (rect.width * anchor.u) - (width / 2),
+          rect.left + 14,
+          rect.right - width - 14,
+        )
+        const y = clamp(
+          rect.top + (rect.height * anchor.v) - (height / 2),
+          rect.top + 14,
+          rect.bottom - height - 14,
+        )
+
+        return {
+          id: anchor.id,
+          windowId: windowState.id,
+          kind: anchor.kind,
+          x,
+          y,
+          width,
+          height,
+          hitPoints,
+          maxHitPoints: anchor.hitPoints,
+          destroyed: hitPoints <= 0,
+        }
+      })
+    })
+  }
+
+  private targetOverlapsObstacle(x: number, y: number, radius: number, obstacle: ObstacleState): boolean {
+    return !obstacle.destroyed
+      && x + radius >= obstacle.x
+      && x - radius <= obstacle.x + obstacle.width
+      && y + radius >= obstacle.y
+      && y - radius <= obstacle.y + obstacle.height
+  }
+
+  private shotHitsObstacle(payload: CatchAttemptPayload, obstacle: ObstacleState): boolean {
+    return (
+      payload.worldX >= obstacle.x - SHOT_HIT_PADDING_PX
+      && payload.worldX <= obstacle.x + obstacle.width + SHOT_HIT_PADDING_PX
+      && payload.worldY >= obstacle.y - SHOT_HIT_PADDING_PX
+      && payload.worldY <= obstacle.y + obstacle.height + SHOT_HIT_PADDING_PX
+    )
+  }
+
+  private circleOverlapsTarget(
+    x: number,
+    y: number,
+    radius: number,
+    targetX: number,
+    targetY: number,
+    targetRadius: number,
+  ): boolean {
+    return Math.hypot(x - targetX, y - targetY) < radius + targetRadius
+  }
+
+  private resolveScoreNodeState(activeWindows: WindowState[], activeScoreNode: ScoreNodeState | null): void {
+    if (!activeScoreNode) {
+      return
+    }
+
+    const scoreWindowId = activeScoreNode.windowId
+    const scoreWindow = activeWindows.find((windowState) => windowState.id === scoreWindowId)
+    const roomTitle = scoreWindow?.title ?? 'Current relay'
+    const scoreBall = this.balls.find((ball) =>
+      pointInCircle(ball.x, ball.y, activeScoreNode.x, activeScoreNode.y, ball.radius + activeScoreNode.radius),
+    )
+
+    if (scoreBall) {
+      this.claimedScoreNodeWindowIds.add(scoreWindowId)
+      this.enteredScoreNodeWindowIds.delete(scoreWindowId)
+      this.score += activeScoreNode.value
+      this.note = `${roomTitle} bonus secured. +${activeScoreNode.value} score.`
+      return
+    }
+
+    const ballInScoreRoom = this.balls.some((ball) => ball.ownerWindowId === scoreWindowId)
+    if (ballInScoreRoom) {
+      this.enteredScoreNodeWindowIds.add(scoreWindowId)
+      return
+    }
+
+    if (!this.enteredScoreNodeWindowIds.has(scoreWindowId)) {
+      return
+    }
+
+    this.enteredScoreNodeWindowIds.delete(scoreWindowId)
+    this.expiredScoreNodeWindowIds.add(scoreWindowId)
+    this.note = `${roomTitle} bonus lost.`
   }
 
   private getRouteWindowStates(activeWindows: WindowState[]): RouteWindowState[] {
@@ -444,17 +917,18 @@ export class GameEngine {
     const startWindow = activeWindows[0]
     const firstBridge = activeWindows[1]
     const goalWindow = activeWindows[activeWindows.length - 1]
+    const obstacleCount = this.getObstacles(activeWindows).filter((obstacle) => !obstacle.destroyed).length
 
     return firstBridge
-      ? `Level ${this.currentLevel} live. Start in ${startWindow?.title ?? 'Window 1'}, link ${firstBridge.title} first, then route to ${goalWindow?.title ?? 'the goal'}.`
-      : `Level ${this.currentLevel} live. Route the signal to ${goalWindow?.title ?? 'the goal'}.`
+      ? `Level ${this.currentLevel} live. ${obstacleCount} barrier${obstacleCount === 1 ? '' : 's'} online. Start in ${startWindow?.title ?? 'Window 1'}, link ${firstBridge.title} first, then route to ${goalWindow?.title ?? 'the goal'}.`
+      : `Level ${this.currentLevel} live. ${obstacleCount} barrier${obstacleCount === 1 ? '' : 's'} online. Route the signal to ${goalWindow?.title ?? 'the goal'}.`
   }
 
   private getProgressNote(activeWindows: WindowState[]): string {
     const bridgeCount = Math.max(0, activeWindows.length - 2)
     if (this.currentRouteStep < bridgeCount) {
       const nextBridge = activeWindows[this.currentRouteStep + 1]
-      return `Relay ${this.currentRouteStep} linked. Route the signal into ${nextBridge?.title ?? 'the next relay'}.`
+      return `Relay ${this.currentRouteStep} linked. Route the signal around the barriers into ${nextBridge?.title ?? 'the next relay'}.`
     }
 
     return `All relays linked. Goal is live in ${activeWindows[activeWindows.length - 1]?.title ?? 'the goal window'}.`
@@ -483,4 +957,11 @@ export class GameEngine {
 
 function randomBetween(min: number, max: number): number {
   return min + (Math.random() * (max - min))
+}
+
+function isCatchAttemptPayload(value: CatchAttemptPayload | undefined): value is CatchAttemptPayload {
+  return !!value
+    && typeof value.id === 'string'
+    && Number.isFinite(value.worldX)
+    && Number.isFinite(value.worldY)
 }

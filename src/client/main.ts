@@ -245,6 +245,13 @@ function getStatusText(snapshot: GameSnapshot, bounds: WindowBoundsPayload | nul
     return getPhaseLabel(snapshot)
   }
 
+  const liveObstacleCount = snapshot.obstacles.filter((obstacle) => obstacle.windowId === bounds.id && !obstacle.destroyed).length
+  const hasActiveScoreNode = snapshot.activeScoreNode?.windowId === bounds.id
+  const barrierSuffix = liveObstacleCount > 0
+    ? ` · ${liveObstacleCount} BARRIER${liveObstacleCount === 1 ? '' : 'S'}`
+    : ''
+  const scoreSuffix = hasActiveScoreNode ? ' · BONUS LIVE' : ''
+
   if (routeWindow.role === 'start') {
     return snapshot.activeTarget?.kind === 'bridge'
       ? `START -> ${snapshot.activeTarget.label}`
@@ -255,7 +262,7 @@ function getStatusText(snapshot: GameSnapshot, bounds: WindowBoundsPayload | nul
     const relayLabel = `RELAY ${routeWindow.order + 1}`
 
     if (routeWindow.status === 'active') {
-      return `${relayLabel} LIVE`
+      return `${relayLabel} LIVE${barrierSuffix}${scoreSuffix}`
     }
 
     if (routeWindow.status === 'cleared') {
@@ -266,7 +273,7 @@ function getStatusText(snapshot: GameSnapshot, bounds: WindowBoundsPayload | nul
   }
 
   if (snapshot.goalWindowId === bounds.id) {
-    return routeWindow.status === 'active' ? 'GOAL LIVE' : 'GOAL LOCKED'
+    return routeWindow.status === 'active' ? `GOAL LIVE${barrierSuffix}` : 'GOAL LOCKED'
   }
 
   return getPhaseLabel(snapshot)

@@ -29,7 +29,7 @@ Each popup room:
   |- reports canvas bounds
   |- renders the latest snapshot
   |- can request cluster recall
-  |- forwards click input for future gameplay systems
+  |- forwards click input for room shooting
 ```
 
 ## Main Modules
@@ -63,6 +63,7 @@ Responsibilities:
 - maintain authoritative room registry
 - own level selection, unlocks, score, streak, and campaign progression
 - spawn and update the signal ball
+- derive room-local obstacle geometry
 - derive route state: start room, relay rooms, goal room
 - evaluate relay hits and goal completion
 
@@ -79,7 +80,8 @@ Responsibilities:
 - publish bounds over `BroadcastChannel`
 - render the room-local slice of the shared simulation
 - display compact room number and route status
-- forward click input for future shooting / obstacle systems
+- forward click input as room shots
+- render barriers, route targets, and bonus pickups
 
 ### Shared Protocol
 
@@ -125,6 +127,8 @@ The host worker ticker sends periodic tick events into the host UI. On each tick
 - active rooms for the selected level are derived
 - ball state is retuned to current difficulty
 - the ball advances only within the connected component of its current room
+- relay / goal room barriers are applied as internal collision geometry
+- optional relay-room score pickups are derived from the current room state
 - relay / goal collisions are tested
 - a new `GameSnapshot` is broadcast
 
@@ -162,8 +166,13 @@ Room N      -> goal
 Rules:
 
 - the ball always spawns in the start room
+- relay and goal rooms can contain static barrier objects
+- barriers can be destroyed via room clicks
 - only one relay target is active at a time
 - the goal target stays locked until all relays are completed
+- cleared active relay rooms can spawn one optional score pickup
+- routing the ball through that pickup grants bonus score
+- that pickup is lost if the ball leaves the room first
 - clearing a level unlocks the next level
 - players may replay lower unlocked levels
 
@@ -195,7 +204,7 @@ Current messages:
 
 Notes:
 
-- `catch_attempt` is intentionally reserved for future shooting / obstacle logic
+- `catch_attempt` is the room-shot input path used for barrier clearing
 - `snapshot` is the host's full authoritative state broadcast
 - `focus_windows` is used for room-cluster recall behavior
 
@@ -224,8 +233,6 @@ The room chrome is intentionally small so the popup area is mostly playable surf
 
 The current design leaves room for:
 
-- obstacle objects in snapshots
-- click-to-fire actions using existing click forwarding
 - room-side restrictions on passable edges
 - upgrades / cooldown abilities
 - richer target and scoring states
@@ -234,5 +241,6 @@ The current design leaves room for:
 
 - Browser popup policy still matters. The host must open rooms from a user gesture.
 - Popup focus behavior depends on browser and OS window manager rules.
+- Closing a required popup room during a live run aborts the current session.
 - Room geometry comes from browser-reported window metrics and canvas bounds, so bounds syncing is important after relayout.
 - The engine still lives in the host page rather than a `SharedWorker`, so the host remains the authoritative runtime container.
