@@ -7,18 +7,12 @@ interface PopupLayout {
   height: number
 }
 
-interface PopupSizeSnapshot {
-  width: number
-  height: number
-}
-
 export interface PopupHandle {
   id: string
   slot: number
   title: string
   ref: Window | null
   layout: PopupLayout | null
-  lastObservedOuterSize: PopupSizeSnapshot | null
 }
 
 interface LayoutBounds {
@@ -78,7 +72,6 @@ const LEVEL_WINDOW_SHAPES: Record<number, Array<{ width: number; height: number 
 }
 
 const SCREEN_MARGIN = 28
-const SIZE_ENFORCE_TOLERANCE_PX = 2
 const GAP_BY_LEVEL: Record<number, number> = {
   1: WINDOW_POOL_GAP + 64,
   2: WINDOW_POOL_GAP + 48,
@@ -129,7 +122,6 @@ export class WindowManager {
         if (relayout && layout) {
           this.applyLayout(existing.ref, layout)
           existing.layout = layout
-          existing.lastObservedOuterSize = null
         }
 
         handles.push(existing)
@@ -147,7 +139,7 @@ export class WindowManager {
         `left=${Math.round(layout.left)}`,
         `top=${Math.round(layout.top)}`,
         'popup=yes',
-        'resizable=no',
+        'resizable=yes',
         'scrollbars=no',
         'toolbar=no',
         'location=no',
@@ -166,7 +158,6 @@ export class WindowManager {
         title,
         ref,
         layout,
-        lastObservedOuterSize: null,
       }
       this.handles.set(id, handle)
       handles.push(handle)
@@ -212,31 +203,6 @@ export class WindowManager {
 
     if (preferredId) {
       this.focusWindow(preferredId)
-    }
-  }
-
-  enforceSizes(): void {
-    for (const handle of this.handles.values()) {
-      if (!handle.ref || handle.ref.closed || !handle.layout) {
-        continue
-      }
-
-      const currentSize = this.readOuterSize(handle.ref)
-      if (!currentSize) {
-        continue
-      }
-
-      if (this.isNearTargetSize(currentSize, handle.layout)) {
-        handle.lastObservedOuterSize = currentSize
-        continue
-      }
-
-      if (this.matchesObservedSize(currentSize, handle.lastObservedOuterSize)) {
-        continue
-      }
-
-      handle.lastObservedOuterSize = currentSize
-      this.applySize(handle.ref, handle.layout)
     }
   }
 
@@ -388,38 +354,6 @@ export class WindowManager {
     } catch {
       // Ignore blocked resize attempts.
     }
-  }
-
-  private readOuterSize(ref: Window): PopupSizeSnapshot | null {
-    const width = Math.round(ref.outerWidth)
-    const height = Math.round(ref.outerHeight)
-
-    if (width <= 0 || height <= 0) {
-      return null
-    }
-
-    return { width, height }
-  }
-
-  private isNearTargetSize(size: PopupSizeSnapshot, layout: PopupLayout): boolean {
-    return (
-      Math.abs(size.width - Math.round(layout.width)) <= SIZE_ENFORCE_TOLERANCE_PX
-      && Math.abs(size.height - Math.round(layout.height)) <= SIZE_ENFORCE_TOLERANCE_PX
-    )
-  }
-
-  private matchesObservedSize(
-    currentSize: PopupSizeSnapshot,
-    observedSize: PopupSizeSnapshot | null,
-  ): boolean {
-    if (!observedSize) {
-      return false
-    }
-
-    return (
-      Math.abs(currentSize.width - observedSize.width) <= SIZE_ENFORCE_TOLERANCE_PX
-      && Math.abs(currentSize.height - observedSize.height) <= SIZE_ENFORCE_TOLERANCE_PX
-    )
   }
 }
 

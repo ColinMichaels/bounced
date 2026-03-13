@@ -516,6 +516,7 @@ button.primary {
 }
 
 .client-shell {
+  overflow: hidden;
   padding: 0.3rem;
 }
 
@@ -523,6 +524,7 @@ button.primary {
   display: grid;
   gap: 0.3rem;
   height: calc(100vh - 0.6rem);
+  overflow: hidden;
 }
 
 .client-header {

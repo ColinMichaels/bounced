@@ -14,7 +14,10 @@ const roomLabel = String(slot + 1).padStart(2, '0')
 
 const titleElement = must<HTMLElement>('window-title')
 const statusElement = must<HTMLElement>('client-status')
+const clientApp = must<HTMLElement>('client-app')
+const clientHeader = must<HTMLElement>('client-header')
 const canvas = must<HTMLCanvasElement>('game-canvas')
+const canvasFrame = must<HTMLElement>('canvas-frame')
 
 titleElement.textContent = roomLabel
 document.title = title
@@ -27,6 +30,8 @@ const resizeObserver = new ResizeObserver(() => {
 
 let snapshot: GameSnapshot | null = null
 let bounds: WindowBoundsPayload | null = null
+let lockedLayoutKey: string | null = null
+let pendingLayoutKey: string | null = null
 
 channel.post({
   type: 'register_window',
@@ -52,7 +57,7 @@ window.addEventListener('resize', reportBounds)
 window.addEventListener('focus', reportBounds)
 document.addEventListener('visibilitychange', reportBounds)
 canvas.addEventListener('click', handleCanvasClick)
-resizeObserver.observe(canvas)
+resizeObserver.observe(canvasFrame)
 
 window.addEventListener('beforeunload', () => {
   window.clearInterval(heartbeat)
@@ -79,6 +84,7 @@ function handleMessage(message: GameMessage): void {
   }
 
   snapshot = message.payload
+  syncCanvasLock(snapshot)
   statusElement.textContent = getStatusText(snapshot, bounds)
 }
 
@@ -99,6 +105,84 @@ function requestClusterRecall(): void {
   })
 }
 
+function syncCanvasLock(snapshot: GameSnapshot): void {
+  const nextLayoutKey = `${snapshot.selectedLevel}:${snapshot.requiredWindowCount}`
+  if (nextLayoutKey === lockedLayoutKey || nextLayoutKey === pendingLayoutKey) {
+    return
+  }
+
+  pendingLayoutKey = nextLayoutKey
+  releaseLockedRoomSize()
+
+  // Reset to fill mode first so a host-triggered relayout can establish the new baseline.
+  canvas.style.width = '100%'
+  canvas.style.height = '100%'
+  reportBounds()
+
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      const width = Math.round(canvasFrame.clientWidth)
+      const height = Math.round(canvasFrame.clientHeight)
+
+      if (width <= 0 || height <= 0) {
+        pendingLayoutKey = null
+        return
+      }
+
+      applyLockedRoomSize(width, height)
+      lockedLayoutKey = nextLayoutKey
+      pendingLayoutKey = null
+      reportBounds()
+    })
+  })
+}
+
+function releaseLockedRoomSize(): void {
+  document.documentElement.style.minWidth = ''
+  document.documentElement.style.minHeight = ''
+  document.body.style.minWidth = ''
+  document.body.style.minHeight = ''
+  clientApp.style.minWidth = ''
+  clientApp.style.minHeight = ''
+  clientApp.style.width = ''
+  clientApp.style.height = ''
+  canvasFrame.style.minWidth = ''
+  canvasFrame.style.minHeight = ''
+  canvasFrame.style.width = ''
+  canvasFrame.style.height = ''
+  canvas.style.minWidth = ''
+  canvas.style.minHeight = ''
+}
+
+function applyLockedRoomSize(width: number, height: number): void {
+  const appGap = parseFloat(window.getComputedStyle(clientApp).rowGap || '0')
+  const shellStyles = window.getComputedStyle(document.body)
+  const shellPaddingX = parseFloat(shellStyles.paddingLeft || '0') + parseFloat(shellStyles.paddingRight || '0')
+  const shellPaddingY = parseFloat(shellStyles.paddingTop || '0') + parseFloat(shellStyles.paddingBottom || '0')
+  const headerHeight = Math.ceil(clientHeader.getBoundingClientRect().height)
+  const appWidth = Math.max(width, Math.ceil(clientHeader.scrollWidth))
+  const appHeight = headerHeight + Math.ceil(appGap) + height
+  const shellWidth = appWidth + Math.ceil(shellPaddingX)
+  const shellHeight = appHeight + Math.ceil(shellPaddingY)
+
+  document.documentElement.style.minWidth = `${shellWidth}px`
+  document.documentElement.style.minHeight = `${shellHeight}px`
+  document.body.style.minWidth = `${shellWidth}px`
+  document.body.style.minHeight = `${shellHeight}px`
+  clientApp.style.minWidth = `${appWidth}px`
+  clientApp.style.minHeight = `${appHeight}px`
+  clientApp.style.width = `${appWidth}px`
+  clientApp.style.height = `${appHeight}px`
+  canvasFrame.style.minWidth = `${width}px`
+  canvasFrame.style.minHeight = `${height}px`
+  canvasFrame.style.width = `${width}px`
+  canvasFrame.style.height = `${height}px`
+  canvas.style.minWidth = `${width}px`
+  canvas.style.minHeight = `${height}px`
+  canvas.style.width = `${width}px`
+  canvas.style.height = `${height}px`
+}
+
 function measureWindow(): WindowBoundsPayload {
   const canvasRect = canvas.getBoundingClientRect()
   const frameInset = Math.max(0, (window.outerWidth - window.innerWidth) / 2)
@@ -116,8 +200,8 @@ function measureWindow(): WindowBoundsPayload {
     height: window.outerHeight,
     contentX: contentOriginX + canvasRect.left,
     contentY: contentOriginY + canvasRect.top,
-    contentWidth: canvasRect.width,
-    contentHeight: canvasRect.height,
+    contentWidth: pendingLayoutKey ? 0 : canvasRect.width,
+    contentHeight: pendingLayoutKey ? 0 : canvasRect.height,
     visible: !document.hidden,
   }
 }
