@@ -158,7 +158,7 @@ export class GameEngine {
   }
 
   handleCatchAttempt(_payload?: unknown): void {
-    // Scoring now comes from routing the signal into the goal target.
+    // Reserved for the upcoming firing/barrier mechanic. Routing into the goal scores for now.
   }
 
   step(now: number): void {

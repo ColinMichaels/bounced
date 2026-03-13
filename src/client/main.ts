@@ -49,6 +49,7 @@ window.addEventListener('pointerdown', requestClusterRecall, { capture: true })
 window.addEventListener('resize', reportBounds)
 window.addEventListener('focus', reportBounds)
 document.addEventListener('visibilitychange', reportBounds)
+canvas.addEventListener('click', handleCanvasClick)
 
 window.addEventListener('beforeunload', () => {
   window.clearInterval(heartbeat)
@@ -102,8 +103,11 @@ function requestClusterRecall(): void {
 }
 
 function measureWindow(): WindowBoundsPayload {
-  const horizontalChrome = Math.max(0, window.outerWidth - window.innerWidth)
+  const canvasRect = canvas.getBoundingClientRect()
+  const frameInset = Math.max(0, (window.outerWidth - window.innerWidth) / 2)
   const verticalChrome = Math.max(0, window.outerHeight - window.innerHeight)
+  const contentOriginX = window.screenX + frameInset
+  const contentOriginY = window.screenY + Math.max(0, verticalChrome - frameInset)
 
   return {
     id: windowId,
@@ -113,12 +117,34 @@ function measureWindow(): WindowBoundsPayload {
     y: window.screenY,
     width: window.outerWidth,
     height: window.outerHeight,
-    contentX: window.screenX + (horizontalChrome / 2),
-    contentY: window.screenY + verticalChrome,
-    contentWidth: window.innerWidth,
-    contentHeight: window.innerHeight,
+    contentX: contentOriginX + canvasRect.left,
+    contentY: contentOriginY + canvasRect.top,
+    contentWidth: canvasRect.width,
+    contentHeight: canvasRect.height,
     visible: !document.hidden,
   }
+}
+
+function handleCanvasClick(event: MouseEvent): void {
+  if (!bounds) {
+    return
+  }
+
+  const rect = canvas.getBoundingClientRect()
+  const localX = event.clientX - rect.left
+  const localY = event.clientY - rect.top
+
+  channel.post({
+    type: 'catch_attempt',
+    payload: {
+      id: windowId,
+      localX,
+      localY,
+      worldX: bounds.contentX + localX,
+      worldY: bounds.contentY + localY,
+      tick: snapshot?.tick ?? 0,
+    },
+  })
 }
 
 function getStatusText(snapshot: GameSnapshot, bounds: WindowBoundsPayload): string {
