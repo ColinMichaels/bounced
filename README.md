@@ -43,6 +43,8 @@ Useful commands:
 ```bash
 npm run check
 npm run build
+npm run build:pages
+npm run preview:pages
 ```
 
 ## How The Game Works
@@ -59,6 +61,24 @@ The ball is simulated in desktop coordinates, but it is constrained by the live 
 - `End Session`: close spawned game windows and reset campaign progress
 - Click any popup room: recall the cluster to the front
 - Drag popup rooms: change connectivity and routing
+
+## GitHub Pages
+
+Manual Pages-oriented commands:
+
+```bash
+npm run build:pages
+npm run preview:pages
+npm run deploy
+```
+
+Notes:
+
+- `build:pages` builds with the repo base path `/bounced/`
+- `preview:pages` is the quickest way to test the Pages build locally
+- `deploy` publishes the built `dist/` folder to the `gh-pages` branch using the `gh-pages` package
+- the included workflow also auto-publishes on pushes to `main` or `master`
+- in GitHub repo settings, Pages should serve from the `gh-pages` branch root if you want the branch-based deploy flow to go live
 
 ## Project Docs
 
