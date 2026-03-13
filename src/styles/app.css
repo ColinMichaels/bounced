@@ -92,6 +92,24 @@ button.primary {
 
 .host-shell {
   padding: 1.5rem;
+  position: relative;
+}
+
+.host-shell::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 16%, rgba(147, 247, 255, 0.04), transparent 38%),
+    linear-gradient(180deg, rgba(3, 7, 12, 0), rgba(3, 7, 12, 0));
+  backdrop-filter: blur(0) saturate(1);
+  opacity: 0;
+  transition:
+    opacity 180ms ease,
+    background 180ms ease,
+    backdrop-filter 180ms ease;
+  z-index: 1;
 }
 
 .host-app {
@@ -99,6 +117,12 @@ button.primary {
   gap: 1rem;
   margin: 0 auto;
   max-width: 1120px;
+  position: relative;
+  z-index: 0;
+  transition:
+    opacity 180ms ease,
+    filter 180ms ease,
+    transform 180ms ease;
 }
 
 .hero,
@@ -114,6 +138,12 @@ button.primary {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 24px 60px rgba(0, 0, 0, 0.28);
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    backdrop-filter 180ms ease,
+    opacity 180ms ease;
 }
 
 .hero {
@@ -170,16 +200,16 @@ button.primary {
 .level-select {
   display: grid;
   gap: 0.7rem;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   margin-top: 1rem;
 }
 
 .level-chip {
   align-items: flex-start;
   display: grid;
-  gap: 0.5rem;
-  min-height: 88px;
-  padding: 0.78rem 0.85rem;
+  gap: 0.72rem;
+  min-height: 122px;
+  padding: 0.82rem 0.9rem 0.88rem;
   text-align: left;
 }
 
@@ -204,11 +234,64 @@ button.primary {
   text-transform: uppercase;
 }
 
-.level-chip__meta {
-  color: #b6cbdd;
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  line-height: 1.4;
+.level-chip__graph {
+  display: grid;
+  gap: 0.48rem;
+  width: 100%;
+}
+
+.level-chip__metric {
+  align-items: center;
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+}
+
+.level-chip__label,
+.level-chip__value {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.level-chip__label {
+  color: #8fa4b8;
+}
+
+.level-chip__value {
+  color: #dcecff;
+  text-align: right;
+}
+
+.level-chip__track {
+  background:
+    linear-gradient(90deg, rgba(147, 247, 255, 0.04), rgba(147, 247, 255, 0.01)),
+    rgba(5, 10, 16, 0.78);
+  border: 1px solid rgba(132, 221, 255, 0.08);
+  border-radius: 999px;
+  display: block;
+  height: 10px;
+  overflow: hidden;
+  position: relative;
+}
+
+.level-chip__fill {
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  min-width: 10px;
+}
+
+.level-chip__fill--windows {
+  background: linear-gradient(90deg, rgba(87, 220, 255, 0.76), rgba(147, 247, 255, 0.96));
+}
+
+.level-chip__fill--relays {
+  background: linear-gradient(90deg, rgba(104, 255, 214, 0.66), rgba(135, 255, 227, 0.9));
+}
+
+.level-chip__fill--speed {
+  background: linear-gradient(90deg, rgba(255, 185, 110, 0.72), rgba(255, 221, 157, 0.94));
 }
 
 .level-chip.is-current {
@@ -222,6 +305,10 @@ button.primary {
   color: var(--accent);
 }
 
+.level-chip.is-current .level-chip__track {
+  border-color: rgba(147, 247, 255, 0.22);
+}
+
 .level-chip.is-completed {
   background:
     linear-gradient(180deg, rgba(147, 247, 255, 0.12), rgba(147, 247, 255, 0.03)),
@@ -232,12 +319,25 @@ button.primary {
   color: #b8fff3;
 }
 
+.level-chip.is-completed .level-chip__value {
+  color: #dffef8;
+}
+
 .level-chip.is-locked {
   background: rgba(8, 12, 18, 0.72);
 }
 
-.level-chip.is-locked .level-chip__meta {
-  color: rgba(182, 203, 221, 0.4);
+.level-chip.is-locked .level-chip__label,
+.level-chip.is-locked .level-chip__value {
+  color: rgba(182, 203, 221, 0.42);
+}
+
+.level-chip.is-locked .level-chip__track {
+  border-color: rgba(132, 221, 255, 0.04);
+}
+
+.level-chip.is-locked .level-chip__fill {
+  opacity: 0.38;
 }
 
 .warning {
@@ -340,6 +440,37 @@ button.primary {
 
 .window-list .inactive {
   color: var(--muted);
+}
+
+.host-shell[data-session-state="armed"][data-deck-focus="background"]::after {
+  background:
+    radial-gradient(circle at 50% 16%, rgba(147, 247, 255, 0.05), transparent 36%),
+    linear-gradient(180deg, rgba(3, 7, 12, 0.18), rgba(3, 7, 12, 0.52));
+  backdrop-filter: blur(10px) saturate(0.86);
+  opacity: 1;
+}
+
+.host-shell[data-session-state="armed"][data-deck-focus="background"] .host-app {
+  filter: saturate(0.78) brightness(0.8);
+  opacity: 0.72;
+}
+
+.host-shell[data-session-state="armed"][data-deck-focus="background"] .hero,
+.host-shell[data-session-state="armed"][data-deck-focus="background"] .control-panel,
+.host-shell[data-session-state="armed"][data-deck-focus="background"] .panel,
+.host-shell[data-session-state="armed"][data-deck-focus="background"] .scoreboard article {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 18%),
+    rgba(6, 11, 18, 0.38);
+  border-color: rgba(132, 221, 255, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 18px 44px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(16px) saturate(0.82);
+}
+
+.host-shell[data-session-state="armed"][data-deck-focus="background"] .hero::before {
+  opacity: 0.3;
 }
 
 .client-shell {

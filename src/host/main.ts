@@ -1,7 +1,7 @@
 import '../styles/app.css'
 
 import { GameEngine } from '../engine/gameEngine'
-import { getDifficultyForLevel, MAX_LEVEL } from '../engine/difficulty'
+import { DIFFICULTY_LEVELS, getDifficultyForLevel, MAX_LEVEL } from '../engine/difficulty'
 import { openGameChannel } from '../network/channel'
 import type { GameMessage } from '../shared/messages'
 import type { GameSnapshot } from '../shared/types'
@@ -20,11 +20,16 @@ const bestStreakValue = must<HTMLElement>('best-streak-value')
 const levelValue = must<HTMLElement>('level-value')
 const windowCountValue = must<HTMLElement>('window-count-value')
 const windowList = must<HTMLUListElement>('window-list')
+const hostShell = document.body
 
 const channel = openGameChannel(handleMessage)
 const engine = new GameEngine(channel)
 const windowManager = new WindowManager(window)
 const ticker = new Worker(new URL('./ticker.worker.ts', import.meta.url), { type: 'module' })
+const MAX_LEVEL_WINDOWS = Math.max(...DIFFICULTY_LEVELS.map((level) => level.activeWindows))
+const MAX_LEVEL_RELAYS = Math.max(...DIFFICULTY_LEVELS.map((level) => Math.max(1, level.activeWindows - 2)))
+const MIN_LEVEL_SPEED = Math.min(...DIFFICULTY_LEVELS.map((level) => level.speed))
+const MAX_LEVEL_SPEED = Math.max(...DIFFICULTY_LEVELS.map((level) => level.speed))
 
 let hasStarted = false
 let readinessWarning = ''
@@ -35,8 +40,24 @@ let lastSizeEnforceAt = 0
 let desiredWindowCount = 0
 let lastLayoutKey = ''
 let awaitingFreshBoundsSince = 0
+let hostHasFocus = document.visibilityState === 'visible' && document.hasFocus()
 
 engine.subscribe(renderSnapshot)
+
+window.addEventListener('focus', () => {
+  hostHasFocus = true
+  syncDeckPresentation()
+})
+
+window.addEventListener('blur', () => {
+  hostHasFocus = false
+  syncDeckPresentation()
+})
+
+document.addEventListener('visibilitychange', () => {
+  hostHasFocus = document.visibilityState === 'visible' && document.hasFocus()
+  syncDeckPresentation()
+})
 
 levelSelect.addEventListener('click', (event) => {
   const target = event.target instanceof HTMLElement
@@ -96,6 +117,7 @@ startButton.addEventListener('click', () => {
   lastFollowAt = 0
   lastSizeEnforceAt = 0
   awaitingFreshBoundsSince = Date.now()
+  syncDeckPresentation()
   windowManager.recallAll()
   renderWarnings()
   engine.start(Date.now())
@@ -116,6 +138,7 @@ stopButton.addEventListener('click', () => {
   awaitingFreshBoundsSince = 0
   windowManager.closeAll()
   engine.endGame()
+  syncDeckPresentation()
 })
 
 window.addEventListener('beforeunload', () => {
@@ -237,6 +260,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   levelSelect.innerHTML = renderLevelButtons(snapshot)
   syncWindowFollow(snapshot)
   renderWarnings()
+  syncDeckPresentation()
 }
 
 function renderWarnings(): void {
@@ -295,6 +319,7 @@ function renderLevelButtons(snapshot: GameSnapshot): string {
   return Array.from({ length: MAX_LEVEL }, (_, index) => {
     const level = index + 1
     const difficulty = getDifficultyForLevel(level)
+    const relayCount = Math.max(1, difficulty.activeWindows - 2)
     const isLocked = level > snapshot.maxUnlockedLevel
     const isCurrent = level === snapshot.selectedLevel
     const isCompleted = completed.has(level)
@@ -311,6 +336,9 @@ function renderLevelButtons(snapshot: GameSnapshot): string {
         : isCompleted
           ? 'cleared'
           : 'open'
+    const windowsFill = getMetricFill(difficulty.activeWindows, 1, MAX_LEVEL_WINDOWS)
+    const relayFill = getMetricFill(relayCount, 1, MAX_LEVEL_RELAYS)
+    const speedFill = getMetricFill(difficulty.speed, MIN_LEVEL_SPEED, MAX_LEVEL_SPEED)
 
     return `
       <button class="${classes}" data-level="${level}" ${isLocked ? 'disabled' : ''}>
@@ -318,10 +346,41 @@ function renderLevelButtons(snapshot: GameSnapshot): string {
           <strong>Level ${level}</strong>
           <em>${state}</em>
         </span>
-        <span class="level-chip__meta">${difficulty.activeWindows} windows • ${Math.max(1, difficulty.activeWindows - 2)} relays • ${difficulty.speed} speed</span>
+        <span class="level-chip__graph">
+          <span class="level-chip__metric">
+            <span class="level-chip__label">Windows</span>
+            <span class="level-chip__track">
+              <span class="level-chip__fill level-chip__fill--windows" style="width: ${windowsFill}%"></span>
+            </span>
+            <span class="level-chip__value">${difficulty.activeWindows}</span>
+          </span>
+          <span class="level-chip__metric">
+            <span class="level-chip__label">Relays</span>
+            <span class="level-chip__track">
+              <span class="level-chip__fill level-chip__fill--relays" style="width: ${relayFill}%"></span>
+            </span>
+            <span class="level-chip__value">${relayCount}</span>
+          </span>
+          <span class="level-chip__metric">
+            <span class="level-chip__label">Speed</span>
+            <span class="level-chip__track">
+              <span class="level-chip__fill level-chip__fill--speed" style="width: ${speedFill}%"></span>
+            </span>
+            <span class="level-chip__value">${difficulty.speed}</span>
+          </span>
+        </span>
       </button>
     `
   }).join('')
+}
+
+function getMetricFill(value: number, min: number, max: number): number {
+  if (max <= min) {
+    return 100
+  }
+
+  const normalized = (value - min) / (max - min)
+  return Math.round((0.18 + (normalized * 0.82)) * 100)
 }
 
 function hasFreshWindowBounds(snapshot: GameSnapshot, since: number): boolean {
@@ -341,4 +400,9 @@ function hasFreshWindowBounds(snapshot: GameSnapshot, since: number): boolean {
   return playableWindows
     .slice(0, requiredCount)
     .every((windowState) => windowState.lastSeenAt >= since)
+}
+
+function syncDeckPresentation(): void {
+  hostShell.dataset.sessionState = hasStarted ? 'armed' : 'idle'
+  hostShell.dataset.deckFocus = hasStarted && !hostHasFocus ? 'background' : 'foreground'
 }
