@@ -12,14 +12,12 @@ const slot = Number(search.get('slot') ?? '0')
 const title = search.get('title') ?? `Window ${slot + 1}`
 
 const titleElement = must<HTMLElement>('window-title')
-const labelElement = must<HTMLElement>('window-label')
 const scoreElement = must<HTMLElement>('client-score')
 const levelElement = must<HTMLElement>('client-level')
 const statusElement = must<HTMLElement>('client-status')
 const canvas = must<HTMLCanvasElement>('game-canvas')
 
 titleElement.textContent = title
-labelElement.textContent = `Window ${slot + 1}`
 
 const renderer = new BallRenderer(canvas)
 const channel = openGameChannel(handleMessage)
@@ -75,8 +73,8 @@ function handleMessage(message: GameMessage): void {
   }
 
   snapshot = message.payload
-  scoreElement.textContent = `Score ${snapshot.score}`
-  levelElement.textContent = `Level ${snapshot.difficulty.level}`
+  scoreElement.textContent = `S${snapshot.score}`
+  levelElement.textContent = `L${snapshot.selectedLevel}`
 
   if (bounds) {
     statusElement.textContent = getStatusText(snapshot, bounds)

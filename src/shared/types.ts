@@ -70,6 +70,7 @@ export interface DifficultyLevel {
 export interface GameSnapshot {
   tick: number
   phase: GamePhase
+  campaignComplete: boolean
   score: number
   streak: number
   bestStreak: number

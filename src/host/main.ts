@@ -31,7 +31,9 @@ let readinessWarning = ''
 let followWindows = true
 let lastFocusedOwnerId: string | null = null
 let lastFollowAt = 0
+let lastSizeEnforceAt = 0
 let desiredWindowCount = 0
+let lastLayoutKey = ''
 
 engine.subscribe(renderSnapshot)
 
@@ -59,9 +61,12 @@ ticker.onmessage = (event: MessageEvent<{ type: 'tick'; now: number }>) => {
 }
 
 startButton.addEventListener('click', () => {
-  const initialWindowCount = getDifficultyForLevel(1).activeWindows
+  const snapshot = engine.getSnapshot()
+  const initialLevel = snapshot.selectedLevel
+  const initialWindowCount = getDifficultyForLevel(initialLevel).activeWindows
   desiredWindowCount = initialWindowCount
-  windowManager.ensureWindowPool(initialWindowCount)
+  lastLayoutKey = `${initialLevel}:${initialWindowCount}`
+  windowManager.ensureWindowPool(initialWindowCount, initialLevel, { relayout: true })
   const openCount = windowManager.getOpenCount()
 
   if (openCount < initialWindowCount) {
@@ -78,6 +83,7 @@ startButton.addEventListener('click', () => {
   followWindows = true
   lastFocusedOwnerId = null
   lastFollowAt = 0
+  lastSizeEnforceAt = 0
   windowManager.recallAll()
   renderWarnings()
   engine.start(Date.now())
@@ -93,6 +99,8 @@ stopButton.addEventListener('click', () => {
   readinessWarning = ''
   lastFocusedOwnerId = null
   lastFollowAt = 0
+  lastSizeEnforceAt = 0
+  lastLayoutKey = ''
   windowManager.closeAll()
   engine.endGame()
 })
@@ -135,15 +143,38 @@ function handleMessage(message: GameMessage): void {
 function renderSnapshot(snapshot: GameSnapshot): void {
   const registeredCount = snapshot.windows.length
   const goalWindowTitle = snapshot.windows.find((windowState) => windowState.id === snapshot.goalWindowId)?.title ?? 'pending'
+  const layoutKey = `${snapshot.selectedLevel}:${snapshot.requiredWindowCount}`
 
-  if (hasStarted && snapshot.phase !== 'idle' && snapshot.requiredWindowCount !== desiredWindowCount) {
+  if (hasStarted && snapshot.campaignComplete) {
+    hasStarted = false
+    desiredWindowCount = 0
+    lastFocusedOwnerId = null
+    lastFollowAt = 0
+    lastSizeEnforceAt = 0
+    lastLayoutKey = ''
+    readinessWarning = 'Campaign complete. Windows cleared. Choose any unlocked level and arm field to replay.'
+    windowManager.closeAll()
+  }
+
+  if (hasStarted && snapshot.phase !== 'idle' && layoutKey !== lastLayoutKey) {
+    lastLayoutKey = layoutKey
     desiredWindowCount = snapshot.requiredWindowCount
-    windowManager.ensureWindowPool(desiredWindowCount)
+    lastFocusedOwnerId = null
+    windowManager.ensureWindowPool(desiredWindowCount, snapshot.selectedLevel, { relayout: true })
+    windowManager.recallAll()
 
     if (windowManager.getOpenCount() < desiredWindowCount) {
       readinessWarning = `Only ${windowManager.getOpenCount()} of ${desiredWindowCount} game windows opened.`
     } else if (!readinessWarning.startsWith('Browser blocked')) {
       readinessWarning = ''
+    }
+  }
+
+  if (hasStarted && snapshot.phase !== 'idle') {
+    const now = Date.now()
+    if (now - lastSizeEnforceAt > 350) {
+      windowManager.enforceSizes()
+      lastSizeEnforceAt = now
     }
   }
 
@@ -162,6 +193,8 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     `Registered windows: ${registeredCount}.`,
     `Goal window: ${goalWindowTitle}.`,
     `Unlocked levels: 1-${snapshot.maxUnlockedLevel}.`,
+    `${snapshot.completedLevels.length} of ${MAX_LEVEL} levels cleared.`,
+    'Windows spawn disconnected each level. Move them to build a route.',
     `${snapshot.balls.length} signal${snapshot.balls.length === 1 ? '' : 's'} live.`,
   ].join(' ')
 
@@ -237,6 +270,7 @@ function renderLevelButtons(snapshot: GameSnapshot): string {
 
   return Array.from({ length: MAX_LEVEL }, (_, index) => {
     const level = index + 1
+    const difficulty = getDifficultyForLevel(level)
     const isLocked = level > snapshot.maxUnlockedLevel
     const isCurrent = level === snapshot.selectedLevel
     const isCompleted = completed.has(level)
@@ -256,8 +290,11 @@ function renderLevelButtons(snapshot: GameSnapshot): string {
 
     return `
       <button class="${classes}" data-level="${level}" ${isLocked ? 'disabled' : ''}>
-        <span>Level ${level}</span>
-        <span>${state}</span>
+        <span class="level-chip__head">
+          <strong>Level ${level}</strong>
+          <em>${state}</em>
+        </span>
+        <span class="level-chip__meta">${difficulty.activeWindows} windows • ${difficulty.speed} speed</span>
       </button>
     `
   }).join('')

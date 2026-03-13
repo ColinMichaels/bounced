@@ -49,10 +49,12 @@ export class GameEngine {
     const playableWindows = this.getPlayableWindows(registeredWindows)
     const activeWindows = this.getActiveWindows(difficulty.activeWindows, playableWindows)
     const goal = this.getGoalState(activeWindows, difficulty)
+    const campaignComplete = this.phase === 'paused' && this.completedLevels.size >= MAX_LEVEL
 
     return {
       tick: this.tick,
       phase: this.phase,
+      campaignComplete,
       score: this.score,
       streak: this.streak,
       bestStreak: this.bestStreak,
@@ -74,17 +76,11 @@ export class GameEngine {
   }
 
   start(now: number): void {
-    this.score = 0
-    this.streak = 0
-    this.bestStreak = 0
     this.tick = 0
-    this.currentLevel = 1
-    this.maxUnlockedLevel = 1
-    this.completedLevels.clear()
     this.balls = []
     this.goalAnchor = null
     this.phase = 'waiting'
-    this.note = 'Level 1 armed. Connect the windows and route the signal into the goal target.'
+    this.note = `Level ${this.currentLevel} armed. Connect the windows and route the signal into the goal target.`
     this.lastStepAt = now
     this.emitSnapshot()
   }
@@ -232,9 +228,12 @@ export class GameEngine {
   private handleGoalHit(activeWindows: WindowState[], goal: GoalState, now: number): void {
     const clearedLevel = this.currentLevel
     const goalWindow = activeWindows.find((windowState) => windowState.id === goal.windowId)
+    const wasCompleted = this.completedLevels.has(clearedLevel)
 
     this.completedLevels.add(clearedLevel)
-    this.score += 1
+    if (!wasCompleted) {
+      this.score = this.completedLevels.size
+    }
     this.streak += 1
     this.bestStreak = Math.max(this.bestStreak, this.streak)
     this.balls = []
@@ -279,7 +278,8 @@ export class GameEngine {
   }
 
   private createBallSet(activeWindows: WindowState[], difficulty: DifficultyLevel): BallState[] {
-    return [createBall(activeWindows, difficulty)]
+    const spawnWindows = activeWindows.slice(0, -1)
+    return [createBall(spawnWindows.length > 0 ? spawnWindows : activeWindows, difficulty)]
   }
 
   private createGoalAnchor(): GoalAnchor {
