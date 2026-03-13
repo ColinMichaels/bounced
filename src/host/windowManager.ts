@@ -128,7 +128,7 @@ export class WindowManager {
         continue
       }
 
-      const url = new URL('/client.html', this.hostWindow.location.href)
+      const url = new URL('./client.html', this.hostWindow.location.href)
       url.searchParams.set('id', id)
       url.searchParams.set('slot', String(slot))
       url.searchParams.set('title', title)
