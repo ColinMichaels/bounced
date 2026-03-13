@@ -36,7 +36,6 @@ let readinessWarning = ''
 let followWindows = true
 let lastFocusedOwnerId: string | null = null
 let lastFollowAt = 0
-let lastSizeEnforceAt = 0
 let desiredWindowCount = 0
 let lastLayoutKey = ''
 let awaitingFreshBoundsSince = 0
@@ -120,7 +119,6 @@ startButton.addEventListener('click', () => {
   followWindows = true
   lastFocusedOwnerId = null
   lastFollowAt = 0
-  lastSizeEnforceAt = 0
   awaitingFreshBoundsSince = Date.now()
   syncDeckPresentation()
   windowManager.recallAll()
@@ -138,7 +136,6 @@ stopButton.addEventListener('click', () => {
   readinessWarning = ''
   lastFocusedOwnerId = null
   lastFollowAt = 0
-  lastSizeEnforceAt = 0
   lastLayoutKey = ''
   awaitingFreshBoundsSince = 0
   windowManager.closeAll()
@@ -191,7 +188,6 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     desiredWindowCount = 0
     lastFocusedOwnerId = null
     lastFollowAt = 0
-    lastSizeEnforceAt = 0
     lastLayoutKey = ''
     awaitingFreshBoundsSince = 0
     readinessWarning = 'Campaign complete. Windows cleared. Choose any unlocked level and start the game to replay.'
@@ -210,14 +206,6 @@ function renderSnapshot(snapshot: GameSnapshot): void {
       readinessWarning = `Only ${windowManager.getOpenCount()} of ${desiredWindowCount} game windows opened.`
     } else if (!readinessWarning.startsWith('Browser blocked')) {
       readinessWarning = ''
-    }
-  }
-
-  if (hasStarted && snapshot.phase !== 'idle') {
-    const now = Date.now()
-    if (now - lastSizeEnforceAt > 350) {
-      windowManager.enforceSizes()
-      lastSizeEnforceAt = now
     }
   }
 
