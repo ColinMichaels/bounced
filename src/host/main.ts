@@ -231,7 +231,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
 
   statusText.textContent = hasStarted
     ? snapshot.note
-    : 'Idle. Arm the field to open the signal windows.'
+    : 'Idle. Allow popups, then arm the field to open the signal windows.'
   detailNote.textContent = [
     `Game windows open: ${windowManager.getOpenCount()} / ${snapshot.requiredWindowCount}.`,
     `Registered windows: ${registeredCount}.`,
