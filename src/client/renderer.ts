@@ -1,5 +1,5 @@
 import { pointInRect, rectFromWindow } from '../shared/geometry'
-import type { BallState, GameSnapshot, WindowBoundsPayload } from '../shared/types'
+import type { GameSnapshot, RouteWindowState, WindowBoundsPayload } from '../shared/types'
 
 interface TrailPoint {
   x: number
@@ -26,29 +26,31 @@ export class BallRenderer {
     this.resize()
     const width = this.canvas.clientWidth
     const height = this.canvas.clientHeight
+    const routeWindow = snapshot && bounds
+      ? snapshot.routeWindows.find((windowState) => windowState.id === bounds.id) ?? null
+      : null
 
     this.context.clearRect(0, 0, width, height)
-    this.drawBackdrop(width, height)
+    this.drawBackdrop(width, height, routeWindow)
 
     if (!snapshot || !bounds) {
-      this.drawMessage(width, height, 'Waiting for synchronization...')
       return
     }
 
     const isActive = snapshot.activeWindowIds.includes(bounds.id)
     if (!isActive) {
-      this.drawStandby(width, height)
+      this.decayTrails()
       return
     }
 
     if (snapshot.balls.length === 0) {
-      this.drawGoal(snapshot, bounds)
-      this.drawMessage(width, height, snapshot.phase === 'waiting' ? 'Waiting for field...' : 'Respawning...')
+      this.drawTarget(snapshot, bounds)
+      this.decayTrails()
       return
     }
 
     const windowRect = rectFromWindow(bounds)
-    this.drawGoal(snapshot, bounds)
+    this.drawTarget(snapshot, bounds)
     const visibleBalls = snapshot.balls.filter((ball) => pointInRect(ball.x, ball.y, windowRect))
     if (visibleBalls.length === 0) {
       this.decayTrails()
@@ -81,12 +83,18 @@ export class BallRenderer {
     this.context.setTransform(dpr, 0, 0, dpr, 0, 0)
   }
 
-  private drawBackdrop(width: number, height: number): void {
+  private drawBackdrop(width: number, height: number, routeWindow: RouteWindowState | null): void {
     const gradient = this.context.createLinearGradient(0, 0, width, height)
     gradient.addColorStop(0, '#08111a')
     gradient.addColorStop(1, '#03070d')
     this.context.fillStyle = gradient
     this.context.fillRect(0, 0, width, height)
+
+    const tint = this.getRouteTint(routeWindow)
+    if (tint) {
+      this.context.fillStyle = tint
+      this.context.fillRect(0, 0, width, height)
+    }
 
     this.context.strokeStyle = 'rgba(147, 247, 255, 0.08)'
     this.context.lineWidth = 1
@@ -104,17 +112,6 @@ export class BallRenderer {
       this.context.lineTo(width, y)
       this.context.stroke()
     }
-  }
-
-  private drawStandby(width: number, height: number): void {
-    this.drawMessage(width, height, 'Stand by. This window activates at higher difficulty.')
-  }
-
-  private drawMessage(width: number, height: number, message: string): void {
-    this.context.fillStyle = 'rgba(221, 239, 255, 0.82)'
-    this.context.font = '600 16px "SF Mono", "IBM Plex Mono", monospace'
-    this.context.textAlign = 'center'
-    this.context.fillText(message, width / 2, height / 2)
   }
 
   private pushTrail(ballId: string, x: number, y: number): void {
@@ -178,35 +175,62 @@ export class BallRenderer {
     this.context.stroke()
   }
 
-  private drawGoal(snapshot: GameSnapshot, bounds: WindowBoundsPayload): void {
-    if (!snapshot.goal || snapshot.goal.windowId !== bounds.id) {
+  private drawTarget(snapshot: GameSnapshot, bounds: WindowBoundsPayload): void {
+    if (!snapshot.activeTarget || snapshot.activeTarget.windowId !== bounds.id) {
       return
     }
 
-    const x = snapshot.goal.x - bounds.contentX
-    const y = snapshot.goal.y - bounds.contentY
-    const radius = snapshot.goal.radius
+    const x = snapshot.activeTarget.x - bounds.contentX
+    const y = snapshot.activeTarget.y - bounds.contentY
+    const radius = snapshot.activeTarget.radius
+    const isGoal = snapshot.activeTarget.kind === 'goal'
 
     this.context.beginPath()
-    this.context.strokeStyle = 'rgba(255, 214, 122, 0.92)'
+    this.context.strokeStyle = isGoal ? 'rgba(255, 214, 122, 0.92)' : 'rgba(108, 239, 255, 0.92)'
     this.context.lineWidth = 2
     this.context.arc(x, y, radius + 10, 0, Math.PI * 2)
     this.context.stroke()
 
     this.context.beginPath()
-    this.context.strokeStyle = 'rgba(255, 214, 122, 0.46)'
+    this.context.strokeStyle = isGoal ? 'rgba(255, 214, 122, 0.46)' : 'rgba(108, 239, 255, 0.42)'
     this.context.lineWidth = 6
     this.context.arc(x, y, radius, 0, Math.PI * 2)
     this.context.stroke()
 
     this.context.beginPath()
-    this.context.fillStyle = 'rgba(255, 214, 122, 0.18)'
+    this.context.fillStyle = isGoal ? 'rgba(255, 214, 122, 0.18)' : 'rgba(108, 239, 255, 0.16)'
     this.context.arc(x, y, radius - 6, 0, Math.PI * 2)
     this.context.fill()
 
-    this.context.fillStyle = 'rgba(255, 238, 202, 0.88)'
+    this.context.fillStyle = isGoal ? 'rgba(255, 238, 202, 0.88)' : 'rgba(224, 252, 255, 0.9)'
     this.context.font = '600 11px "SF Mono", "IBM Plex Mono", monospace'
     this.context.textAlign = 'center'
-    this.context.fillText('GOAL', x, y + 4)
+    this.context.fillText(snapshot.activeTarget.label, x, y + 4)
+  }
+
+  private getRouteTint(routeWindow: RouteWindowState | null): string | null {
+    if (!routeWindow) {
+      return null
+    }
+
+    if (routeWindow.role === 'start') {
+      return 'rgba(77, 207, 255, 0.08)'
+    }
+
+    if (routeWindow.role === 'goal') {
+      return routeWindow.status === 'active'
+        ? 'rgba(255, 201, 116, 0.12)'
+        : 'rgba(255, 201, 116, 0.05)'
+    }
+
+    if (routeWindow.status === 'active') {
+      return 'rgba(98, 239, 255, 0.1)'
+    }
+
+    if (routeWindow.status === 'cleared') {
+      return 'rgba(121, 255, 191, 0.08)'
+    }
+
+    return 'rgba(115, 150, 176, 0.07)'
   }
 }

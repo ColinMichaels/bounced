@@ -114,7 +114,7 @@ export class WindowManager {
 
     for (let slot = 0; slot < count; slot += 1) {
       const id = `play-window-${slot + 1}`
-      const title = `Window ${slot + 1}`
+      const title = `Room ${slot + 1}`
       const existing = this.handles.get(id)
       const layout = layouts[slot] ?? existing?.layout ?? fallbackLayouts[slot]
 

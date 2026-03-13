@@ -3,7 +3,16 @@ import { clamp, findContainingWindow, getConnectedWindows, pointInCircle, rectFr
 import type { GameChannel } from '../network/channel'
 import { getDifficultyForLevel, MAX_LEVEL } from './difficulty'
 import { advanceBall, createBall, retuneBall, stabilizeBall } from './physics'
-import type { BallState, DifficultyLevel, GamePhase, GameSnapshot, GoalState, WindowBoundsPayload, WindowState } from '../shared/types'
+import type {
+  BallState,
+  DifficultyLevel,
+  GamePhase,
+  GameSnapshot,
+  RouteWindowState,
+  TargetState,
+  WindowBoundsPayload,
+  WindowState,
+} from '../shared/types'
 
 type SnapshotListener = (snapshot: GameSnapshot) => void
 
@@ -18,7 +27,8 @@ export class GameEngine {
   private readonly channel: GameChannel
 
   private balls: BallState[] = []
-  private goalAnchor: GoalAnchor | null = null
+  private targetAnchors: GoalAnchor[] = []
+  private currentRouteStep = 0
   private score = 0
   private streak = 0
   private bestStreak = 0
@@ -48,7 +58,10 @@ export class GameEngine {
     const difficulty = getDifficultyForLevel(this.currentLevel)
     const playableWindows = this.getPlayableWindows(registeredWindows)
     const activeWindows = this.getActiveWindows(difficulty.activeWindows, playableWindows)
-    const goal = this.getGoalState(activeWindows, difficulty)
+    const routeWindowIds = activeWindows.map((windowState) => windowState.id)
+    const startWindowId = routeWindowIds[0] ?? null
+    const bridgeWindowIds = routeWindowIds.slice(1, -1)
+    const completedBridgeWindowIds = bridgeWindowIds.slice(0, Math.min(this.currentRouteStep, bridgeWindowIds.length))
     const campaignComplete = this.phase === 'paused' && this.completedLevels.size >= MAX_LEVEL
 
     return {
@@ -64,9 +77,13 @@ export class GameEngine {
       difficulty,
       availableWindowCount: playableWindows.length,
       requiredWindowCount: difficulty.activeWindows,
-      activeWindowIds: activeWindows.map((windowState) => windowState.id),
-      goalWindowId: goal?.windowId ?? activeWindows[activeWindows.length - 1]?.id ?? null,
-      goal,
+      activeWindowIds: routeWindowIds,
+      startWindowId,
+      bridgeWindowIds,
+      completedBridgeWindowIds,
+      goalWindowId: routeWindowIds[routeWindowIds.length - 1] ?? null,
+      routeWindows: this.getRouteWindowStates(activeWindows),
+      activeTarget: this.getActiveTargetState(activeWindows, difficulty),
       windows: registeredWindows,
       balls: this.balls,
       ball: this.balls.find((ball) => ball.ownerWindowId) ?? this.balls[0] ?? null,
@@ -78,16 +95,16 @@ export class GameEngine {
   start(now: number): void {
     this.tick = 0
     this.balls = []
-    this.goalAnchor = null
+    this.resetRouteState()
     this.phase = 'waiting'
-    this.note = `Level ${this.currentLevel} armed. Connect the windows and route the signal into the goal target.`
+    this.note = `Level ${this.currentLevel} armed. Connect the windows and route the signal through every relay to the goal.`
     this.lastStepAt = now
     this.emitSnapshot()
   }
 
   endGame(): void {
     this.balls = []
-    this.goalAnchor = null
+    this.resetRouteState()
     this.phase = 'idle'
     this.score = 0
     this.streak = 0
@@ -107,13 +124,13 @@ export class GameEngine {
 
     this.currentLevel = level
     this.balls = []
-    this.goalAnchor = null
+    this.resetRouteState()
 
     if (this.phase === 'idle') {
       this.note = `Level ${level} queued. Arm the field to begin.`
     } else {
       this.phase = 'waiting'
-      this.note = `Level ${level} selected. Route the signal into the goal target in the last active window.`
+      this.note = `Level ${level} selected. Route the signal through each relay window in order.`
     }
 
     this.emitSnapshot()
@@ -133,10 +150,10 @@ export class GameEngine {
       return
     }
 
-    this.goalAnchor = this.createGoalAnchor()
+    this.initializeRouteTargets(activeWindows)
     this.balls = this.createBallSet(activeWindows, difficulty)
     this.phase = 'running'
-    this.note = `Level ${this.currentLevel} reseeded. Guide the signal into ${activeWindows[activeWindows.length - 1]?.title ?? 'the goal window'}.`
+    this.note = this.getRoundIntro(activeWindows)
     this.emitSnapshot()
   }
 
@@ -154,7 +171,7 @@ export class GameEngine {
   }
 
   handleCatchAttempt(_payload?: unknown): void {
-    // Reserved for the upcoming firing/barrier mechanic. Routing into the goal scores for now.
+    // Reserved for the upcoming firing/barrier mechanic. Routing into relays and the goal scores for now.
   }
 
   step(now: number): void {
@@ -173,14 +190,14 @@ export class GameEngine {
       return
     }
 
-    if (!this.goalAnchor) {
-      this.goalAnchor = this.createGoalAnchor()
+    if (this.targetAnchors.length !== Math.max(0, activeWindows.length - 1)) {
+      this.initializeRouteTargets(activeWindows)
     }
 
-    const goal = this.getGoalState(activeWindows, difficulty)
+    const activeTarget = this.getActiveTargetState(activeWindows, difficulty)
     if (this.phase !== 'running') {
       this.phase = 'running'
-      this.note = `Level ${this.currentLevel} live. Route the signal into ${activeWindows[activeWindows.length - 1]?.title ?? 'the goal window'}.`
+      this.note = this.getRoundIntro(activeWindows)
     }
 
     if (this.balls.length === 0) {
@@ -211,13 +228,13 @@ export class GameEngine {
     })
     this.tick += 1
 
-    if (goal) {
-      const scoringBall = this.balls.find((ball) =>
-        pointInCircle(ball.x, ball.y, goal.x, goal.y, ball.radius + goal.radius),
+    if (activeTarget) {
+      const routeBall = this.balls.find((ball) =>
+        pointInCircle(ball.x, ball.y, activeTarget.x, activeTarget.y, ball.radius + activeTarget.radius),
       )
 
-      if (scoringBall) {
-        this.handleGoalHit(activeWindows, goal, now)
+      if (routeBall) {
+        this.handleRouteHit(activeWindows, activeTarget, now)
         return
       }
     }
@@ -225,9 +242,17 @@ export class GameEngine {
     this.emitSnapshot()
   }
 
-  private handleGoalHit(activeWindows: WindowState[], goal: GoalState, now: number): void {
+  private handleRouteHit(activeWindows: WindowState[], activeTarget: TargetState, now: number): void {
+    if (activeTarget.kind === 'bridge') {
+      this.currentRouteStep += 1
+      this.lastStepAt = now
+      this.note = this.getProgressNote(activeWindows)
+      this.emitSnapshot()
+      return
+    }
+
     const clearedLevel = this.currentLevel
-    const goalWindow = activeWindows.find((windowState) => windowState.id === goal.windowId)
+    const goalWindow = activeWindows.find((windowState) => windowState.id === activeTarget.windowId)
     const wasCompleted = this.completedLevels.has(clearedLevel)
 
     this.completedLevels.add(clearedLevel)
@@ -237,7 +262,7 @@ export class GameEngine {
     this.streak += 1
     this.bestStreak = Math.max(this.bestStreak, this.streak)
     this.balls = []
-    this.goalAnchor = null
+    this.resetRouteState()
     this.lastStepAt = now
 
     if (clearedLevel < MAX_LEVEL) {
@@ -278,8 +303,8 @@ export class GameEngine {
   }
 
   private createBallSet(activeWindows: WindowState[], difficulty: DifficultyLevel): BallState[] {
-    const spawnWindows = activeWindows.slice(0, -1)
-    return [createBall(spawnWindows.length > 0 ? spawnWindows : activeWindows, difficulty)]
+    const startWindow = activeWindows[0]
+    return startWindow ? [createBall([startWindow], difficulty)] : []
   }
 
   private createGoalAnchor(): GoalAnchor {
@@ -289,33 +314,113 @@ export class GameEngine {
     }
   }
 
-  private getGoalState(activeWindows: WindowState[], difficulty: DifficultyLevel): GoalState | null {
-    if (!this.goalAnchor || activeWindows.length === 0) {
+  private getActiveTargetState(activeWindows: WindowState[], difficulty: DifficultyLevel): TargetState | null {
+    if (this.targetAnchors.length === 0 || activeWindows.length < 2) {
       return null
     }
 
-    const goalWindow = activeWindows[activeWindows.length - 1]
-    const rect = rectFromWindow(goalWindow)
-    const radius = Math.max(18, difficulty.radius * 1.8)
+    const targetWindows = activeWindows.slice(1)
+    const targetWindow = targetWindows[this.currentRouteStep]
+    const anchor = this.targetAnchors[this.currentRouteStep]
+    if (!targetWindow || !anchor) {
+      return null
+    }
+
+    const rect = rectFromWindow(targetWindow)
+    const isGoal = this.currentRouteStep >= targetWindows.length - 1
+    const radius = isGoal
+      ? Math.max(18, difficulty.radius * 1.8)
+      : Math.max(16, difficulty.radius * 1.45)
     const margin = radius + 18
 
     const x = clamp(
-      rect.left + (rect.width * this.goalAnchor.u),
+      rect.left + (rect.width * anchor.u),
       rect.left + margin,
       rect.right - margin,
     )
     const y = clamp(
-      rect.top + (rect.height * this.goalAnchor.v),
+      rect.top + (rect.height * anchor.v),
       rect.top + margin,
       rect.bottom - margin,
     )
 
     return {
-      windowId: goalWindow.id,
+      kind: isGoal ? 'goal' : 'bridge',
+      label: isGoal ? 'GOAL' : `RELAY ${this.currentRouteStep + 1}`,
+      windowId: targetWindow.id,
       x,
       y,
       radius,
     }
+  }
+
+  private initializeRouteTargets(activeWindows: WindowState[]): void {
+    this.currentRouteStep = 0
+    this.targetAnchors = Array.from({ length: Math.max(0, activeWindows.length - 1) }, () => this.createGoalAnchor())
+  }
+
+  private resetRouteState(): void {
+    this.currentRouteStep = 0
+    this.targetAnchors = []
+  }
+
+  private getRouteWindowStates(activeWindows: WindowState[]): RouteWindowState[] {
+    const bridgeCount = Math.max(0, activeWindows.length - 2)
+
+    return activeWindows.map((windowState, index) => {
+      if (index === 0) {
+        return {
+          id: windowState.id,
+          role: 'start',
+          order: 0,
+          status: 'ready',
+        }
+      }
+
+      if (index === activeWindows.length - 1) {
+        return {
+          id: windowState.id,
+          role: 'goal',
+          order: index,
+          status: this.currentRouteStep >= bridgeCount ? 'active' : 'locked',
+        }
+      }
+
+      const bridgeIndex = index - 1
+      let status: RouteWindowState['status'] = 'locked'
+      if (bridgeIndex < this.currentRouteStep) {
+        status = 'cleared'
+      } else if (bridgeIndex === this.currentRouteStep) {
+        status = 'active'
+      }
+
+      return {
+        id: windowState.id,
+        role: 'bridge',
+        order: bridgeIndex,
+        status,
+      }
+    })
+  }
+
+  private getRoundIntro(activeWindows: WindowState[]): string {
+    const startWindow = activeWindows[0]
+    const firstBridge = activeWindows[1]
+    const goalWindow = activeWindows[activeWindows.length - 1]
+
+    return firstBridge
+      ? `Level ${this.currentLevel} live. Start in ${startWindow?.title ?? 'Window 1'}, link ${firstBridge.title} first, then route to ${goalWindow?.title ?? 'the goal'}.`
+      : `Level ${this.currentLevel} live. Route the signal to ${goalWindow?.title ?? 'the goal'}.`
+  }
+
+  private getProgressNote(activeWindows: WindowState[]): string {
+    const bridgeCount = Math.max(0, activeWindows.length - 2)
+    if (this.currentRouteStep < bridgeCount) {
+      const nextBridge = activeWindows[this.currentRouteStep + 1]
+      return `Relay ${this.currentRouteStep} linked. Route the signal into ${nextBridge?.title ?? 'the next relay'}.`
+    }
+
+    return `All relays linked. Goal is live in ${activeWindows[activeWindows.length - 1]?.title ?? 'the goal window'}.`
   }
 
   private emitSnapshot(): void {

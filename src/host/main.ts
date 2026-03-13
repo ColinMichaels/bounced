@@ -34,6 +34,7 @@ let lastFollowAt = 0
 let lastSizeEnforceAt = 0
 let desiredWindowCount = 0
 let lastLayoutKey = ''
+let awaitingFreshBoundsSince = 0
 
 engine.subscribe(renderSnapshot)
 
@@ -55,6 +56,16 @@ levelSelect.addEventListener('click', (event) => {
 ticker.onmessage = (event: MessageEvent<{ type: 'tick'; now: number }>) => {
   if (event.data?.type !== 'tick') {
     return
+  }
+
+  if (awaitingFreshBoundsSince > 0) {
+    const snapshot = engine.getSnapshot()
+    if (!hasFreshWindowBounds(snapshot, awaitingFreshBoundsSince)) {
+      renderWarnings()
+      return
+    }
+
+    awaitingFreshBoundsSince = 0
   }
 
   engine.step(event.data.now)
@@ -84,6 +95,7 @@ startButton.addEventListener('click', () => {
   lastFocusedOwnerId = null
   lastFollowAt = 0
   lastSizeEnforceAt = 0
+  awaitingFreshBoundsSince = Date.now()
   windowManager.recallAll()
   renderWarnings()
   engine.start(Date.now())
@@ -101,6 +113,7 @@ stopButton.addEventListener('click', () => {
   lastFollowAt = 0
   lastSizeEnforceAt = 0
   lastLayoutKey = ''
+  awaitingFreshBoundsSince = 0
   windowManager.closeAll()
   engine.endGame()
 })
@@ -152,6 +165,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     lastFollowAt = 0
     lastSizeEnforceAt = 0
     lastLayoutKey = ''
+    awaitingFreshBoundsSince = 0
     readinessWarning = 'Campaign complete. Windows cleared. Choose any unlocked level and arm field to replay.'
     windowManager.closeAll()
   }
@@ -162,6 +176,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     lastFocusedOwnerId = null
     windowManager.ensureWindowPool(desiredWindowCount, snapshot.selectedLevel, { relayout: true })
     windowManager.recallAll()
+    awaitingFreshBoundsSince = Date.now()
 
     if (windowManager.getOpenCount() < desiredWindowCount) {
       readinessWarning = `Only ${windowManager.getOpenCount()} of ${desiredWindowCount} game windows opened.`
@@ -191,10 +206,11 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   detailNote.textContent = [
     `Game windows open: ${windowManager.getOpenCount()} / ${snapshot.requiredWindowCount}.`,
     `Registered windows: ${registeredCount}.`,
+    `Route: start + ${Math.max(0, snapshot.bridgeWindowIds.length)} relay${snapshot.bridgeWindowIds.length === 1 ? '' : 's'} + goal.`,
     `Goal window: ${goalWindowTitle}.`,
     `Unlocked levels: 1-${snapshot.maxUnlockedLevel}.`,
     `${snapshot.completedLevels.length} of ${MAX_LEVEL} levels cleared.`,
-    'Windows spawn disconnected each level. Move them to build a route.',
+    'Windows spawn disconnected each level. Build a route and clear relays in order.',
     `${snapshot.balls.length} signal${snapshot.balls.length === 1 ? '' : 's'} live.`,
   ].join(' ')
 
@@ -202,12 +218,16 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     .map((windowState) => {
       const isActive = snapshot.activeWindowIds.includes(windowState.id)
       const visibility = windowState.visible ? 'visible' : 'hidden'
+      const routeWindow = snapshot.routeWindows.find((routeEntry) => routeEntry.id === windowState.id)
       const marker = isActive ? 'active' : 'inactive'
+      const routeLabel = routeWindow
+        ? `${routeWindow.role}${routeWindow.role === 'bridge' ? ` ${routeWindow.order + 1}` : ''} • ${routeWindow.status}`
+        : 'standby'
 
       return `
         <li>
           <span>${windowState.title}</span>
-          <span class="${marker}">${isActive ? 'active' : 'standby'} • ${visibility}</span>
+          <span class="${marker}">${routeLabel} • ${visibility}</span>
         </li>
       `
     })
@@ -226,8 +246,12 @@ function renderWarnings(): void {
     warnings.push(readinessWarning)
   }
 
+  if (awaitingFreshBoundsSince > 0 && hasStarted) {
+    warnings.push('Syncing live window bounds after layout change.')
+  }
+
   if (!readinessWarning && hasStarted) {
-    warnings.push('Click any game window to recall the full cluster. Route the lead signal into the target in the last active window.')
+    warnings.push('Click any game window to recall the full cluster. Route the signal through each live relay before the goal unlocks.')
   }
 
   warning.hidden = warnings.length === 0
@@ -294,8 +318,27 @@ function renderLevelButtons(snapshot: GameSnapshot): string {
           <strong>Level ${level}</strong>
           <em>${state}</em>
         </span>
-        <span class="level-chip__meta">${difficulty.activeWindows} windows • ${difficulty.speed} speed</span>
+        <span class="level-chip__meta">${difficulty.activeWindows} windows • ${Math.max(1, difficulty.activeWindows - 2)} relays • ${difficulty.speed} speed</span>
       </button>
     `
   }).join('')
+}
+
+function hasFreshWindowBounds(snapshot: GameSnapshot, since: number): boolean {
+  const requiredCount = snapshot.requiredWindowCount
+  const playableWindows = snapshot.windows
+    .filter((windowState) =>
+      windowState.slot < requiredCount
+      && windowState.contentWidth > 0
+      && windowState.contentHeight > 0,
+    )
+    .sort((left, right) => left.slot - right.slot)
+
+  if (playableWindows.length < requiredCount) {
+    return false
+  }
+
+  return playableWindows
+    .slice(0, requiredCount)
+    .every((windowState) => windowState.lastSeenAt >= since)
 }

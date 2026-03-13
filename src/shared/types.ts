@@ -46,6 +46,21 @@ export interface GoalState {
   radius: number
 }
 
+export type RouteWindowRole = 'start' | 'bridge' | 'goal'
+export type RouteWindowStatus = 'ready' | 'active' | 'cleared' | 'locked'
+
+export interface RouteWindowState {
+  id: string
+  role: RouteWindowRole
+  order: number
+  status: RouteWindowStatus
+}
+
+export interface TargetState extends GoalState {
+  kind: 'bridge' | 'goal'
+  label: string
+}
+
 export type TransitionDirection = 'left' | 'right' | 'up' | 'down'
 
 export interface TransitionHint {
@@ -81,8 +96,12 @@ export interface GameSnapshot {
   availableWindowCount: number
   requiredWindowCount: number
   activeWindowIds: string[]
+  startWindowId: string | null
+  bridgeWindowIds: string[]
+  completedBridgeWindowIds: string[]
   goalWindowId: string | null
-  goal: GoalState | null
+  routeWindows: RouteWindowState[]
+  activeTarget: TargetState | null
   windows: WindowState[]
   balls: BallState[]
   ball: BallState | null

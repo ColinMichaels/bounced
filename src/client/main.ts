@@ -9,18 +9,21 @@ import { BallRenderer } from './renderer'
 const search = new URLSearchParams(window.location.search)
 const windowId = search.get('id') ?? `play-window-${Math.random().toString(36).slice(2, 8)}`
 const slot = Number(search.get('slot') ?? '0')
-const title = search.get('title') ?? `Window ${slot + 1}`
+const title = search.get('title') ?? `Room ${slot + 1}`
+const roomLabel = String(slot + 1).padStart(2, '0')
 
 const titleElement = must<HTMLElement>('window-title')
-const scoreElement = must<HTMLElement>('client-score')
-const levelElement = must<HTMLElement>('client-level')
 const statusElement = must<HTMLElement>('client-status')
 const canvas = must<HTMLCanvasElement>('game-canvas')
 
-titleElement.textContent = title
+titleElement.textContent = roomLabel
+document.title = title
 
 const renderer = new BallRenderer(canvas)
 const channel = openGameChannel(handleMessage)
+const resizeObserver = new ResizeObserver(() => {
+  reportBounds()
+})
 
 let snapshot: GameSnapshot | null = null
 let bounds: WindowBoundsPayload | null = null
@@ -41,6 +44,7 @@ channel.post({
 })
 
 reportBounds()
+window.requestAnimationFrame(reportBounds)
 const heartbeat = window.setInterval(reportBounds, BOUNDS_HEARTBEAT_MS)
 
 window.addEventListener('pointerdown', requestClusterRecall, { capture: true })
@@ -48,9 +52,11 @@ window.addEventListener('resize', reportBounds)
 window.addEventListener('focus', reportBounds)
 document.addEventListener('visibilitychange', reportBounds)
 canvas.addEventListener('click', handleCanvasClick)
+resizeObserver.observe(canvas)
 
 window.addEventListener('beforeunload', () => {
   window.clearInterval(heartbeat)
+  resizeObserver.disconnect()
   channel.post({
     type: 'unregister_window',
     payload: {
@@ -73,14 +79,7 @@ function handleMessage(message: GameMessage): void {
   }
 
   snapshot = message.payload
-  scoreElement.textContent = `S${snapshot.score}`
-  levelElement.textContent = `L${snapshot.selectedLevel}`
-
-  if (bounds) {
-    statusElement.textContent = getStatusText(snapshot, bounds)
-  } else {
-    statusElement.textContent = snapshot.note
-  }
+  statusElement.textContent = getStatusText(snapshot, bounds)
 }
 
 function reportBounds(): void {
@@ -145,17 +144,62 @@ function handleCanvasClick(event: MouseEvent): void {
   })
 }
 
-function getStatusText(snapshot: GameSnapshot, bounds: WindowBoundsPayload): string {
+function getStatusText(snapshot: GameSnapshot, bounds: WindowBoundsPayload | null): string {
+  if (!bounds) {
+    return getPhaseLabel(snapshot)
+  }
+
   const isActive = snapshot.activeWindowIds.includes(bounds.id)
   if (!isActive) {
-    return 'Stand by for a later difficulty tier.'
+    return 'STANDBY'
+  }
+
+  const routeWindow = snapshot.routeWindows.find((windowState) => windowState.id === bounds.id)
+  if (!routeWindow) {
+    return getPhaseLabel(snapshot)
+  }
+
+  if (routeWindow.role === 'start') {
+    return snapshot.activeTarget?.kind === 'bridge'
+      ? `START -> ${snapshot.activeTarget.label}`
+      : 'START -> GOAL'
+  }
+
+  if (routeWindow.role === 'bridge') {
+    const relayLabel = `RELAY ${routeWindow.order + 1}`
+
+    if (routeWindow.status === 'active') {
+      return `${relayLabel} LIVE`
+    }
+
+    if (routeWindow.status === 'cleared') {
+      return `${relayLabel} CLEAR`
+    }
+
+    return `${relayLabel} LOCKED`
   }
 
   if (snapshot.goalWindowId === bounds.id) {
-    return 'Goal window. Route the signal into the target.'
+    return routeWindow.status === 'active' ? 'GOAL LIVE' : 'GOAL LOCKED'
   }
 
-  return snapshot.note
+  return getPhaseLabel(snapshot)
+}
+
+function getPhaseLabel(snapshot: GameSnapshot): string {
+  if (snapshot.phase === 'idle') {
+    return 'OFFLINE'
+  }
+
+  if (snapshot.phase === 'waiting') {
+    return 'SYNC'
+  }
+
+  if (snapshot.phase === 'paused') {
+    return 'PAUSED'
+  }
+
+  return 'LIVE'
 }
 
 function must<T extends HTMLElement>(id: string): T {
