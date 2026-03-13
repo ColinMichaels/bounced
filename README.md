@@ -2,6 +2,8 @@
 
 Multi-window browser game experiment built with `BroadcastChannel`, TypeScript, Vite, and plain canvas rendering.
 
+Live demo: [colinmichaels.github.io/bounced](https://colinmichaels.github.io/bounced/)
+
 The current game is a routing puzzle:
 
 - one host window acts as the authoritative engine
