@@ -360,6 +360,20 @@ button.primary {
   padding-left: 0.9rem;
 }
 
+.warning strong {
+  color: #ffe8bb;
+  font-weight: 600;
+}
+
+.warning--persistent {
+  background: linear-gradient(90deg, rgba(255, 213, 138, 0.08), rgba(255, 213, 138, 0.02));
+  border: 1px solid rgba(255, 213, 138, 0.16);
+  border-left-width: 3px;
+  border-radius: 0.7rem;
+  margin-top: 0.9rem;
+  padding: 0.7rem 0.9rem 0.7rem 1rem;
+}
+
 .status-text {
   color: var(--accent);
   margin: 1rem 0 0;
