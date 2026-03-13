@@ -91,7 +91,7 @@ button.primary {
 }
 
 .host-shell {
-  padding: 1.5rem;
+  padding: 1rem;
   position: relative;
 }
 
@@ -114,7 +114,7 @@ button.primary {
 
 .host-app {
   display: grid;
-  gap: 1rem;
+  gap: 0.8rem;
   margin: 0 auto;
   max-width: 1120px;
   position: relative;
@@ -147,9 +147,16 @@ button.primary {
 }
 
 .hero {
+  align-items: end;
   border-radius: 1rem;
+  display: grid;
+  gap: 0.18rem 1rem;
+  grid-template-areas:
+    "eyebrow lede"
+    "title lede";
+  grid-template-columns: minmax(0, 1fr) auto;
   overflow: hidden;
-  padding: 1.6rem;
+  padding: 0.9rem 1rem;
   position: relative;
 }
 
@@ -166,35 +173,43 @@ button.primary {
 
 .eyebrow {
   color: var(--muted);
+  font-size: 0.66rem;
+  grid-area: eyebrow;
   letter-spacing: 0.18em;
-  margin: 0 0 0.8rem;
+  margin: 0;
   text-transform: uppercase;
 }
 
 .hero h1 {
-  font-size: clamp(2rem, 3.7vw, 4rem);
+  grid-area: title;
+  font-size: clamp(1.35rem, 2.2vw, 1.9rem);
   font-weight: 600;
-  letter-spacing: -0.04em;
-  line-height: 0.96;
+  letter-spacing: -0.03em;
+  line-height: 1;
   margin: 0;
-  max-width: 11ch;
+  max-width: none;
 }
 
 .lede {
+  align-self: center;
   color: #9db1c5;
-  margin: 1rem 0 0;
-  max-width: 58ch;
+  font-size: 0.82rem;
+  grid-area: lede;
+  letter-spacing: 0.04em;
+  margin: 0;
+  max-width: 28ch;
+  text-align: right;
 }
 
 .control-panel {
   border-radius: 0.9rem;
-  padding: 1rem;
+  padding: 0.9rem;
 }
 
 .button-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.7rem;
+  gap: 0.55rem;
 }
 
 .level-select {
@@ -387,8 +402,8 @@ button.primary {
 
 .scoreboard article {
   border-radius: 0.85rem;
-  min-height: 108px;
-  padding: 0.95rem 1rem;
+  min-height: 96px;
+  padding: 0.85rem 0.95rem;
   position: relative;
 }
 
@@ -410,9 +425,9 @@ button.primary {
 
 .scoreboard strong {
   display: block;
-  font-size: clamp(1.7rem, 3vw, 2.35rem);
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
   font-weight: 600;
-  margin-top: 0.7rem;
+  margin-top: 0.55rem;
 }
 
 .detail-grid {
@@ -563,7 +578,18 @@ button.primary {
   }
 
   .hero {
-    padding: 1.2rem;
+    gap: 0.35rem;
+    grid-template-areas:
+      "eyebrow"
+      "title"
+      "lede";
+    grid-template-columns: 1fr;
+    padding: 0.85rem 0.9rem;
+  }
+
+  .lede {
+    max-width: none;
+    text-align: left;
   }
 
   .client-header {
