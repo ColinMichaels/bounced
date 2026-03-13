@@ -1,0 +1,10 @@
+export const CHANNEL_NAME = 'ball_hunt_game'
+export const WINDOW_POOL_GAP = 28
+export const WINDOW_WIDTH = 430
+export const WINDOW_HEIGHT = 430
+export const WINDOW_GRID_COLUMNS = 3
+export const BOUNDS_HEARTBEAT_MS = 250
+export const WINDOW_STALE_MS = 1750
+export const MAX_DELTA_MS = 32
+export const MAX_CATCH_LAG_TICKS = 6
+export const TRANSITION_HINT_LOOKAHEAD_MS = 260

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ball Hunt Window</title>
+  </head>
+  <body class="client-shell">
+    <main class="client-app">
+      <header class="client-header">
+        <div>
+          <p id="window-label" class="client-label">Node</p>
+          <h1 id="window-title">Signal Hunt</h1>
+        </div>
+        <div class="client-meta">
+          <span id="client-level">Level 1</span>
+          <span id="client-score">Score 0</span>
+        </div>
+      </header>
+
+      <section class="canvas-frame">
+        <canvas id="game-canvas"></canvas>
+        <div class="hud">
+          <p id="client-status">Waiting for host snapshot...</p>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/client/main.ts"></script>
+  </body>
+</html>
