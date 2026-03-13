@@ -8,6 +8,7 @@ import type { GameSnapshot } from '../shared/types'
 import { WindowManager } from './windowManager'
 
 const startButton = must<HTMLButtonElement>('start-button')
+const recallButton = must<HTMLButtonElement>('recall-button')
 const respawnButton = must<HTMLButtonElement>('respawn-button')
 const stopButton = must<HTMLButtonElement>('stop-button')
 const warning = must<HTMLParagraphElement>('host-warning')
@@ -127,6 +128,10 @@ respawnButton.addEventListener('click', () => {
   engine.respawnBall()
 })
 
+recallButton.addEventListener('click', () => {
+  recallGameWindows()
+})
+
 stopButton.addEventListener('click', () => {
   hasStarted = false
   desiredWindowCount = 0
@@ -221,6 +226,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   bestStreakValue.textContent = String(snapshot.bestStreak)
   levelValue.textContent = `${snapshot.selectedLevel} / ${MAX_LEVEL}`
   windowCountValue.textContent = `${snapshot.availableWindowCount} / ${snapshot.requiredWindowCount}`
+  recallButton.disabled = !hasStarted || windowManager.getOpenCount() === 0
   stopButton.textContent = 'End Session'
 
   statusText.textContent = hasStarted
@@ -275,7 +281,7 @@ function renderWarnings(): void {
   }
 
   if (!readinessWarning && hasStarted) {
-    warnings.push('Click any game window to recall the full cluster. Route the signal through each live relay before the goal unlocks.')
+    warnings.push('Use Recall Windows or click any game window to recall the cluster. Route the signal through each live relay before the goal unlocks.')
   }
 
   warning.hidden = warnings.length === 0
@@ -301,6 +307,20 @@ function syncWindowFollow(snapshot: GameSnapshot): void {
 
   lastFocusedOwnerId = ownerId
   lastFollowAt = now
+}
+
+function recallGameWindows(): void {
+  if (!hasStarted) {
+    return
+  }
+
+  const snapshot = engine.getSnapshot()
+  const preferredId = snapshot.ball?.ownerWindowId ?? snapshot.activeWindowIds[0] ?? null
+
+  followWindows = true
+  lastFocusedOwnerId = null
+  lastFollowAt = 0
+  windowManager.recallAll(preferredId)
 }
 
 function must<T extends HTMLElement>(id: string): T {
@@ -344,7 +364,14 @@ function renderLevelButtons(snapshot: GameSnapshot): string {
       <button class="${classes}" data-level="${level}" ${isLocked ? 'disabled' : ''}>
         <span class="level-chip__head">
           <strong>Level ${level}</strong>
-          <em>${state}</em>
+          <span class="level-chip__state">
+            ${isLocked ? `
+              <svg class="level-chip__lock" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" aria-hidden="true">
+                <path d="M240-80q-33 0-56.5-23.5T160-160v-400q0-33 23.5-56.5T240-640h40v-80q0-83 58.5-141.5T480-920q83 0 141.5 58.5T680-720v80h40q33 0 56.5 23.5T800-560v400q0 33-23.5 56.5T720-80H240Zm0-80h480v-400H240v400Zm296.5-143.5Q560-327 560-360t-23.5-56.5Q513-440 480-440t-56.5 23.5Q400-393 400-360t23.5 56.5Q447-280 480-280t56.5-23.5ZM360-640h240v-80q0-50-35-85t-85-35q-50 0-85 35t-35 85v80ZM240-160v-400 400Z"/>
+              </svg>
+            ` : ''}
+            ${isLocked ? '' : `<em>${state}</em>`}
+          </span>
         </span>
         <span class="level-chip__graph">
           <span class="level-chip__metric">

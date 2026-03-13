@@ -226,12 +226,25 @@ button.primary {
   letter-spacing: 0.03em;
 }
 
-.level-chip__head em {
+.level-chip__state {
+  align-items: center;
   color: var(--muted);
+  display: inline-flex;
+  gap: 0.32rem;
+}
+
+.level-chip__head em {
   font-size: 0.72rem;
   font-style: normal;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.level-chip__lock {
+  display: block;
+  fill: currentColor;
+  height: 0.9rem;
+  width: 0.9rem;
 }
 
 .level-chip__graph {
