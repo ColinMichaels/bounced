@@ -197,7 +197,6 @@ button.utility {
 .control-panel,
 .panel,
 .scoreboard article,
-.client-header,
 .canvas-frame {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 18%),
@@ -658,35 +657,35 @@ button.utility {
 
 .client-shell {
   overflow: hidden;
-  padding: 0.3rem 0.3rem 0;
 }
 
 .client-app {
-  display: grid;
-  gap: 0.3rem;
-  grid-template-rows: auto minmax(0, 1fr);
   height: calc(100vh - 0.3rem);
   overflow: hidden;
+  position: relative;
 }
 
 .client-header {
   align-items: center;
-  border-radius: 0.72rem;
   display: flex;
   gap: 0.8rem;
   justify-content: space-between;
-  min-height: 34px;
-  padding: 0.3rem 0.55rem;
+  left: 0.55rem;
+  min-height: 0;
+  padding: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0.55rem;
+  top: 0.45rem;
+  z-index: 2;
 }
 
 .client-title {
   margin: 0;
-}
-
-.client-title {
   font-size: 0.86rem;
   font-weight: 600;
   letter-spacing: 0.18em;
+  text-shadow: 0 0 12px rgba(8, 12, 20, 0.92);
   text-transform: uppercase;
 }
 
@@ -695,6 +694,7 @@ button.utility {
   font-size: 0.68rem;
   letter-spacing: 0.14em;
   text-align: right;
+  text-shadow: 0 0 12px rgba(8, 12, 20, 0.92);
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -703,7 +703,6 @@ button.utility {
   background:
     linear-gradient(180deg, rgba(147, 247, 255, 0.02), transparent 12%),
     var(--panel-strong);
-  border-radius: 0.72rem;
   display: grid;
   height: 100%;
   min-height: 0;
@@ -748,6 +747,8 @@ button.utility {
   }
 
   .client-header {
-    padding-inline: 0.5rem;
+    left: 0.5rem;
+    right: 0.5rem;
+    top: 0.4rem;
   }
 }
