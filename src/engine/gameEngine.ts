@@ -76,6 +76,8 @@ const OBSTACLE_TEMPLATES: ObstacleAnchor[] = [
 const SCORE_NODE_VALUE = 1
 const SCORE_NODE_CHARGE_VALUE = 1
 const BRIDGE_PULSE_DURATION_MS = 6_000
+const TIME_BRAKE_DURATION_MS = 4_500
+const TIME_BRAKE_SPEED_SCALE = 0.48
 const EMPTY_BLOCKED_EDGES = new Map<string, WindowEdge[]>()
 const SIDE_BLOCK_PATTERNS: WindowEdge[][] = [
   ['left'],
@@ -116,6 +118,8 @@ export class GameEngine {
   private utilityCharges = 0
   private bridgePulseEndsAt = 0
   private pausedBridgePulseRemainingMs = 0
+  private timeBrakeEndsAt = 0
+  private pausedTimeBrakeRemainingMs = 0
   private currentLevelStartedAt: number | null = null
   private currentLevelElapsedMs = 0
   private bestLevelTimesMs = new Map<number, number>()
@@ -126,6 +130,8 @@ export class GameEngine {
   private readonly completedLevels = new Set<number>()
   private levelSummary: LevelSummaryState | null = null
   private frontWindowId: string | null = null
+  private readonly windowFocusOrder = new Map<string, number>()
+  private focusOrderTick = 0
   private phase: GamePhase = 'idle'
   private pauseReason: PauseReason | null = null
   private pausedPhase: Exclude<GamePhase, 'idle' | 'paused'> | null = null
@@ -139,7 +145,119 @@ export class GameEngine {
   }
 
   setFrontWindowId(windowId: string | null): void {
+    if (!windowId) {
+      this.frontWindowId = null
+      return
+    }
+
+    this.promoteWindowFocus(windowId)
+  }
+
+  setWindowFocusStack(windowIds: string[]): void {
+    for (const windowId of windowIds) {
+      this.promoteWindowFocus(windowId)
+    }
+  }
+
+  private promoteWindowFocus(windowId: string): void {
+    this.focusOrderTick += 1
+    this.windowFocusOrder.set(windowId, this.focusOrderTick)
     this.frontWindowId = windowId
+  }
+
+  private clearWindowFocusState(): void {
+    this.frontWindowId = null
+    this.windowFocusOrder.clear()
+    this.focusOrderTick = 0
+  }
+
+  private syncFrontWindowFromFocusOrder(): void {
+    let nextFrontWindowId: string | null = null
+    let nextFrontRank = -1
+
+    for (const [windowId, rank] of this.windowFocusOrder) {
+      if (rank > nextFrontRank) {
+        nextFrontWindowId = windowId
+        nextFrontRank = rank
+      }
+    }
+
+    this.frontWindowId = nextFrontWindowId
+  }
+
+  private clearActiveUtilities(): void {
+    this.bridgePulseEndsAt = 0
+    this.pausedBridgePulseRemainingMs = 0
+    this.timeBrakeEndsAt = 0
+    this.pausedTimeBrakeRemainingMs = 0
+  }
+
+  private pauseActiveUtilities(now: number): void {
+    this.pausedBridgePulseRemainingMs = this.getBridgePulseRemainingMs(now)
+    this.bridgePulseEndsAt = 0
+    this.pausedTimeBrakeRemainingMs = this.getTimeBrakeRemainingMs(now)
+    this.timeBrakeEndsAt = 0
+  }
+
+  private resumeActiveUtilities(now: number): void {
+    if (this.pausedBridgePulseRemainingMs > 0) {
+      this.bridgePulseEndsAt = now + this.pausedBridgePulseRemainingMs
+      this.pausedBridgePulseRemainingMs = 0
+    }
+
+    if (this.pausedTimeBrakeRemainingMs > 0) {
+      this.timeBrakeEndsAt = now + this.pausedTimeBrakeRemainingMs
+      this.pausedTimeBrakeRemainingMs = 0
+    }
+  }
+
+  debugForceLevelComplete(now: number): boolean {
+    const difficulty = getDifficultyForLevel(this.currentLevel)
+    const activeWindows = this.getActiveWindows(difficulty.activeWindows)
+    const goalWindow = activeWindows[activeWindows.length - 1]
+    if (!goalWindow) {
+      return false
+    }
+
+    const goalRect = rectFromWindow(goalWindow)
+    const target: TargetState = {
+      kind: 'goal',
+      label: 'GOAL',
+      windowId: goalWindow.id,
+      x: goalRect.left + (goalRect.width / 2),
+      y: goalRect.top + (goalRect.height / 2),
+      radius: Math.max(18, difficulty.radius * 1.8),
+    }
+
+    this.handleRouteHit(activeWindows, target, difficulty, now)
+    return true
+  }
+
+  debugAttemptActiveTargetHit(now: number): boolean {
+    if (this.phase !== 'running') {
+      return false
+    }
+
+    const difficulty = getDifficultyForLevel(this.currentLevel)
+    const activeWindows = this.getActiveWindows(difficulty.activeWindows)
+    if (activeWindows.length < difficulty.activeWindows) {
+      return false
+    }
+
+    const obstacles = this.getObstacles(activeWindows)
+    const activeTarget = this.getActiveTargetState(activeWindows, difficulty, obstacles)
+    if (!activeTarget) {
+      return false
+    }
+
+    if (!this.isObjectiveVisible(activeTarget, activeWindows)) {
+      this.note = this.getOccludedObjectiveNote(activeTarget, activeWindows)
+      this.emitSnapshot()
+      return false
+    }
+
+    this.handleRouteHit(activeWindows, activeTarget, difficulty, now)
+    return true
   }
 
   restoreProgress(state: PlayerProgressState | null): void {
@@ -201,13 +319,12 @@ export class GameEngine {
     this.pausedPhase = null
     this.pausedNote = null
     this.levelSummary = null
-    this.frontWindowId = null
     this.tick = 0
     this.balls = []
     this.bonusCollectionCount = 0
     this.utilityCharges = 0
-    this.bridgePulseEndsAt = 0
-    this.pausedBridgePulseRemainingMs = 0
+    this.clearActiveUtilities()
+    this.clearWindowFocusState()
     this.resetLevelTimer()
     this.resetRouteState()
     this.note = this.getIdleNote()
@@ -301,13 +418,12 @@ export class GameEngine {
     this.balls = []
     this.bonusCollectionCount = 0
     this.utilityCharges = 0
-    this.bridgePulseEndsAt = 0
-    this.pausedBridgePulseRemainingMs = 0
+    this.clearActiveUtilities()
     this.pauseReason = null
     this.pausedPhase = null
     this.pausedNote = null
     this.levelSummary = null
-    this.frontWindowId = null
+    this.clearWindowFocusState()
     this.resetLevelTimer()
     this.resetRouteState()
     this.phase = 'waiting'
@@ -320,8 +436,7 @@ export class GameEngine {
     this.balls = []
     this.bonusCollectionCount = 0
     this.utilityCharges = 0
-    this.bridgePulseEndsAt = 0
-    this.pausedBridgePulseRemainingMs = 0
+    this.clearActiveUtilities()
     this.resetLevelTimer()
     this.resetRouteState()
     this.phase = 'idle'
@@ -329,7 +444,7 @@ export class GameEngine {
     this.pausedPhase = null
     this.pausedNote = null
     this.levelSummary = null
-    this.frontWindowId = null
+    this.clearWindowFocusState()
     this.streak = 0
     this.tick = 0
     this.note = this.getIdleNote(prefix)
@@ -345,13 +460,12 @@ export class GameEngine {
     this.currentLevel = level
     this.balls = []
     this.bonusCollectionCount = 0
-    this.bridgePulseEndsAt = 0
-    this.pausedBridgePulseRemainingMs = 0
+    this.clearActiveUtilities()
     this.pauseReason = null
     this.pausedPhase = null
     this.pausedNote = null
     this.levelSummary = null
-    this.frontWindowId = null
+    this.clearWindowFocusState()
     this.resetLevelTimer()
     this.resetRouteState()
 
@@ -370,11 +484,7 @@ export class GameEngine {
       return
     }
 
-    if (this.utilityCharges <= 0) {
-      return
-    }
-
-    if (this.isBridgePulseActive(now)) {
+    if (this.utilityCharges <= 0 || this.getActiveUtilityState(now)) {
       return
     }
 
@@ -384,18 +494,32 @@ export class GameEngine {
     this.emitSnapshot()
   }
 
+  activateTimeBrake(now: number): void {
+    if (this.phase !== 'running') {
+      return
+    }
+
+    if (this.utilityCharges <= 0 || this.getActiveUtilityState(now)) {
+      return
+    }
+
+    this.utilityCharges -= 1
+    this.timeBrakeEndsAt = now + TIME_BRAKE_DURATION_MS
+    this.note = `Time brake live for ${formatDurationMs(TIME_BRAKE_DURATION_MS)}. Signal speed reduced.`
+    this.emitSnapshot()
+  }
+
   continueFromSummary(): void {
     if (this.phase !== 'summary') {
       return
     }
 
     this.levelSummary = null
-    this.bridgePulseEndsAt = 0
-    this.pausedBridgePulseRemainingMs = 0
+    this.clearActiveUtilities()
     this.pauseReason = null
     this.pausedPhase = null
     this.pausedNote = null
-    this.frontWindowId = null
+    this.clearWindowFocusState()
     this.resetLevelTimer()
     this.resetRouteState()
     this.phase = 'waiting'
@@ -411,8 +535,7 @@ export class GameEngine {
     this.pauseReason = 'focus'
     this.pausedPhase = this.phase
     this.pausedNote = this.note
-    this.pausedBridgePulseRemainingMs = this.getBridgePulseRemainingMs(now)
-    this.bridgePulseEndsAt = 0
+    this.pauseActiveUtilities(now)
     this.captureLevelTimer(now)
     this.phase = 'paused'
     this.note = 'Session paused in the control deck. Press Resume Game or click a room to continue.'
@@ -430,10 +553,7 @@ export class GameEngine {
     this.note = this.pausedNote ?? this.note
     this.pausedNote = null
 
-    if (this.pausedBridgePulseRemainingMs > 0) {
-      this.bridgePulseEndsAt = now + this.pausedBridgePulseRemainingMs
-      this.pausedBridgePulseRemainingMs = 0
-    }
+    this.resumeActiveUtilities(now)
 
     if (this.phase === 'running') {
       this.resumeLevelTimer(now)
@@ -458,8 +578,7 @@ export class GameEngine {
     }
 
     this.initializeRouteTargets(activeWindows, difficulty)
-    this.bridgePulseEndsAt = 0
-    this.pausedBridgePulseRemainingMs = 0
+    this.clearActiveUtilities()
     this.pauseReason = null
     this.pausedPhase = null
     this.pausedNote = null
@@ -479,6 +598,10 @@ export class GameEngine {
 
   unregisterWindow(id: string): void {
     this.windows.delete(id)
+    this.windowFocusOrder.delete(id)
+    if (this.frontWindowId === id) {
+      this.syncFrontWindowFromFocusOrder()
+    }
     this.balls = this.balls.filter((ball) => ball.ownerWindowId !== id)
     this.emitSnapshot()
   }
@@ -530,6 +653,9 @@ export class GameEngine {
     if (this.bridgePulseEndsAt > 0 && now >= this.bridgePulseEndsAt) {
       this.bridgePulseEndsAt = 0
     }
+    if (this.timeBrakeEndsAt > 0 && now >= this.timeBrakeEndsAt) {
+      this.timeBrakeEndsAt = 0
+    }
 
     if (this.phase === 'idle' || this.phase === 'paused' || this.phase === 'summary') {
       return
@@ -573,7 +699,10 @@ export class GameEngine {
       const motionObstacles = obstacles.filter((obstacle) =>
         motionWindows.some((windowState) => windowState.id === obstacle.windowId),
       )
-      const tunedBall = retuneBall(ball, difficulty)
+      const tunedBall = retuneBall(ball, {
+        ...difficulty,
+        speed: Math.round(difficulty.speed * this.getActiveSpeedScale(now)),
+      })
       const stabilizedBall = stabilizeBall({
         ...tunedBall,
         ownerWindowId: seedWindow.id,
@@ -642,7 +771,7 @@ export class GameEngine {
     this.streak += 1
     this.bestStreak = Math.max(this.bestStreak, this.streak)
     this.balls = []
-    this.bridgePulseEndsAt = 0
+    this.clearActiveUtilities()
     this.resetLevelTimer()
     this.resetRouteState()
     this.lastStepAt = now
@@ -683,7 +812,7 @@ export class GameEngine {
     this.pauseReason = null
     this.pausedPhase = null
     this.pausedNote = null
-    this.pausedBridgePulseRemainingMs = 0
+    this.clearWindowFocusState()
     this.note = nextLevel === null
       ? `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(clearPerformance.utilityChargeDelta)} Campaign complete.`
       : `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(clearPerformance.utilityChargeDelta)} Level ${nextLevel} ready when you are.`
@@ -694,7 +823,12 @@ export class GameEngine {
     for (const [id, windowState] of this.windows) {
       if (now - windowState.lastSeenAt > WINDOW_STALE_MS) {
         this.windows.delete(id)
+        this.windowFocusOrder.delete(id)
       }
+    }
+
+    if (this.frontWindowId && !this.windows.has(this.frontWindowId)) {
+      this.syncFrontWindowFromFocusOrder()
     }
   }
 
@@ -1336,7 +1470,7 @@ export class GameEngine {
       this.bonusCollectionCount += 1
       this.score += activeScoreNode.value
       this.utilityCharges += SCORE_NODE_CHARGE_VALUE
-      this.note = `${roomTitle} bonus secured. +${activeScoreNode.value} score. +${SCORE_NODE_CHARGE_VALUE} pulse charge.`
+      this.note = `${roomTitle} bonus secured. +${activeScoreNode.value} score. +${SCORE_NODE_CHARGE_VALUE} utility charge.`
       return
     }
 
@@ -1422,7 +1556,7 @@ export class GameEngine {
     }
 
     if (bonus.kind === 'charge') {
-      return `pulse cache secured. +${bonus.chargeValue} pulse charge${bonus.chargeValue === 1 ? '' : 's'}.`
+      return `charge cache secured. +${bonus.chargeValue} utility charge${bonus.chargeValue === 1 ? '' : 's'}.`
     }
 
     return `time cache secured. -${formatDurationMsShort(bonus.timeValueMs)} from the clock.`
@@ -1547,7 +1681,7 @@ export class GameEngine {
       return ''
     }
 
-    return ` +${chargeDelta} pulse charge${chargeDelta === 1 ? '' : 's'}.`
+    return ` +${chargeDelta} utility charge${chargeDelta === 1 ? '' : 's'}.`
   }
 
   private getBridgePulseRemainingMs(now: number): number {
@@ -1558,25 +1692,52 @@ export class GameEngine {
     return this.bridgePulseEndsAt > now ? this.bridgePulseEndsAt - now : 0
   }
 
+  private getTimeBrakeRemainingMs(now: number): number {
+    if (this.phase === 'paused' && this.pauseReason === 'focus') {
+      return this.pausedTimeBrakeRemainingMs
+    }
+
+    return this.timeBrakeEndsAt > now ? this.timeBrakeEndsAt - now : 0
+  }
+
   private getEffectiveBlockedEdges(now: number): Map<string, WindowEdge[]> {
     return this.isBridgePulseActive(now) ? EMPTY_BLOCKED_EDGES : this.blockedEdges
   }
 
   private getActiveUtilityState(now = Date.now()): GameSnapshot['activeUtility'] {
-    const remainingMs = this.getBridgePulseRemainingMs(now)
-    if (remainingMs <= 0) {
-      return null
+    const bridgePulseRemainingMs = this.getBridgePulseRemainingMs(now)
+    if (bridgePulseRemainingMs > 0) {
+      return {
+        kind: 'bridge_pulse',
+        label: 'BRIDGE PULSE',
+        shortLabel: 'PULSE',
+        remainingMs: bridgePulseRemainingMs,
+      }
     }
 
-    return {
-      kind: 'bridge_pulse',
-      label: 'BRIDGE PULSE',
-      remainingMs,
+    const timeBrakeRemainingMs = this.getTimeBrakeRemainingMs(now)
+    if (timeBrakeRemainingMs > 0) {
+      return {
+        kind: 'time_brake',
+        label: 'TIME BRAKE',
+        shortLabel: 'BRAKE',
+        remainingMs: timeBrakeRemainingMs,
+      }
     }
+
+    return null
   }
 
   private isBridgePulseActive(now: number): boolean {
     return this.getBridgePulseRemainingMs(now) > 0
+  }
+
+  private isTimeBrakeActive(now: number): boolean {
+    return this.getTimeBrakeRemainingMs(now) > 0
+  }
+
+  private getActiveSpeedScale(now: number): number {
+    return this.isTimeBrakeActive(now) ? TIME_BRAKE_SPEED_SCALE : 1
   }
 
   private getRouteWindowStates(activeWindows: WindowState[]): RouteWindowState[] {
@@ -1665,23 +1826,12 @@ export class GameEngine {
   }
 
   private isObjectiveVisible(activeTarget: TargetState, activeWindows: WindowState[]): boolean {
-    if (!this.frontWindowId || this.frontWindowId === activeTarget.windowId) {
-      return true
-    }
-
-    const frontWindow = activeWindows.find((windowState) => windowState.id === this.frontWindowId)
-    if (!frontWindow) {
-      return true
-    }
-
-    return !pointInRect(activeTarget.x, activeTarget.y, rectFromWindow(frontWindow))
+    return this.getObjectiveOccluders(activeTarget, activeWindows).length === 0
   }
 
   private getOccludedObjectiveNote(activeTarget: TargetState, activeWindows: WindowState[]): string {
     const targetWindow = activeWindows.find((windowState) => windowState.id === activeTarget.windowId)
-    const frontWindow = this.frontWindowId
-      ? activeWindows.find((windowState) => windowState.id === this.frontWindowId)
-      : null
+    const [frontWindow] = this.getObjectiveOccluders(activeTarget, activeWindows)
 
     if (!targetWindow || !frontWindow || frontWindow.id === targetWindow.id) {
       return this.note
@@ -1689,6 +1839,27 @@ export class GameEngine {
 
     const objectiveLabel = activeTarget.kind === 'goal' ? 'Goal' : activeTarget.label
     return `${objectiveLabel} is masked by ${frontWindow.title}. Bring ${targetWindow.title} to the front to score it.`
+  }
+
+  private getObjectiveOccluders(activeTarget: TargetState, activeWindows: WindowState[]): WindowState[] {
+    const targetWindow = activeWindows.find((windowState) => windowState.id === activeTarget.windowId)
+    if (!targetWindow) {
+      return []
+    }
+
+    const targetRank = this.getWindowFocusRank(targetWindow.id)
+
+    return activeWindows
+      .filter((windowState) =>
+        windowState.id !== targetWindow.id
+        && this.getWindowFocusRank(windowState.id) > targetRank
+        && pointInRect(activeTarget.x, activeTarget.y, rectFromWindow(windowState)),
+      )
+      .sort((left, right) => this.getWindowFocusRank(right.id) - this.getWindowFocusRank(left.id))
+  }
+
+  private getWindowFocusRank(windowId: string): number {
+    return this.windowFocusOrder.get(windowId) ?? 0
   }
 
   private emitSnapshot(): void {

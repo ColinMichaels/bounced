@@ -146,6 +146,12 @@ export class WindowManager {
     return this.handles.get(id) ?? null
   }
 
+  getOpenHandles(): PopupHandle[] {
+    return [...this.handles.values()]
+      .filter((handle) => handle.ref && !handle.ref.closed)
+      .sort((left, right) => left.slot - right.slot)
+  }
+
   focusWindow(id: string): boolean {
     const handle = this.handles.get(id)
     if (!handle?.ref || handle.ref.closed) {

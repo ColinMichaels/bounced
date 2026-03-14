@@ -49,7 +49,7 @@ Simple routes are easier to read, and they also make it easier to predict when t
 
 Relays and goals do not count just because the ball touched their world position.
 
-If the live target is hidden behind another front-most room:
+If the live target is hidden behind another room that is still above it in the current overlap stack:
 
 - the hit will not score
 - the route will not advance
@@ -125,6 +125,27 @@ Bad uses:
 
 Treat pulse as a tempo tool, not a panic button.
 
+## When To Use Time Brake
+
+`Time Brake` solves a different problem than pulse.
+
+Pulse helps when the route is blocked by a locked edge.
+Time Brake helps when the route is almost right, but the ball is arriving too fast.
+
+Best uses:
+
+- a crowded relay room needs one calmer read
+- the goal lane is nearly open and you need a short correction window
+- the ball is about to enter a dense overlap where one bad bounce will cost the run
+
+Bad uses:
+
+- spending it while the route is still broken
+- using it far away from the part of the board that is actually dangerous
+- treating it like a medal cheat instead of a control tool
+
+Use it when timing is the problem. Use pulse when topology is the problem.
+
 ## Bonus Priorities
 
 Not every bonus is worth chasing.
@@ -151,7 +172,7 @@ Take it if it is near the route already. Do not detour hard for it unless you ar
 
 ### Ambient Charge Bonus
 
-Usually worth taking if it is convenient. Charges can save late-level runs.
+Usually worth taking if it is convenient. Shared utility charges can save late-level runs.
 
 ### Ambient Time Bonus
 
@@ -216,6 +237,7 @@ At that point, the winning approach is usually:
 2. clear only the critical blockers
 3. build one clean step to the live relay
 4. use pulse only when it converts directly into progress
+5. use time brake only when it converts directly into control
 
 Trying to make the whole board “look nice” is slower than just making the live path work.
 
@@ -227,7 +249,7 @@ Use this recovery checklist:
 2. Which room is live right now?
 3. Which side of that room is open?
 4. Is a barrier truly blocking the route?
-5. Would a pulse solve this faster than a rebuild?
+5. Would pulse or time brake solve this faster than a rebuild?
 
 That usually gets you back into control quickly.
 
@@ -238,6 +260,7 @@ That usually gets you back into control quickly.
 - Treat barriers as path problems, not cleanup chores.
 - Respect blocked edges first.
 - Spend pulse only when it buys immediate progress.
+- Spend time brake only when it buys immediate control.
 - Take bonuses that fit the route, not bonuses that fight it.
 - Play for clean geometry if you want faster times.
 

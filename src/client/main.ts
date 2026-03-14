@@ -154,6 +154,10 @@ function pollWindowMotion(): void {
     return
   }
 
+  if (document.visibilityState === 'visible' && document.hasFocus()) {
+    announceWindowFocus()
+  }
+
   reportBounds()
 }
 
@@ -504,7 +508,7 @@ function getStatusText(snapshot: GameSnapshot, bounds: WindowBoundsPayload | nul
   const roomBonusCount = snapshot.ambientBonuses.filter((bonus) => bonus.windowId === bounds.id).length
     + (snapshot.activeScoreNode?.windowId === bounds.id ? 1 : 0)
   const sideLockCount = routeWindow.blockedEdges.length
-  const utilitySuffix = snapshot.activeUtility ? ' · PULSE' : ''
+  const utilitySuffix = snapshot.activeUtility ? ` · ${snapshot.activeUtility.shortLabel}` : ''
   const barrierSuffix = liveObstacleCount > 0
     ? ` · ${liveObstacleCount} BARRIER${liveObstacleCount === 1 ? '' : 'S'}`
     : ''
