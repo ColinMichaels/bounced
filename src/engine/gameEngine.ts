@@ -20,6 +20,7 @@ import type {
   DifficultyLevel,
   GamePhase,
   GameSnapshot,
+  LevelSummaryState,
   MedalTier,
   ObstacleState,
   PlayerProgressState,
@@ -89,7 +90,7 @@ const SIDE_BLOCK_PATTERNS: WindowEdge[][] = [
   ['up', 'down'],
 ]
 
-type PauseReason = 'focus' | 'campaign_complete'
+type PauseReason = 'focus'
 
 export class GameEngine {
   private readonly windows = new Map<string, WindowState>()
@@ -123,6 +124,7 @@ export class GameEngine {
   private currentLevel = 1
   private maxUnlockedLevel = 1
   private readonly completedLevels = new Set<number>()
+  private levelSummary: LevelSummaryState | null = null
   private phase: GamePhase = 'idle'
   private pauseReason: PauseReason | null = null
   private pausedPhase: Exclude<GamePhase, 'idle' | 'paused'> | null = null
@@ -193,6 +195,7 @@ export class GameEngine {
     this.pauseReason = null
     this.pausedPhase = null
     this.pausedNote = null
+    this.levelSummary = null
     this.tick = 0
     this.balls = []
     this.bonusCollectionCount = 0
@@ -247,7 +250,7 @@ export class GameEngine {
     const startWindowId = routeWindowIds[0] ?? null
     const bridgeWindowIds = routeWindowIds.slice(1, -1)
     const completedBridgeWindowIds = bridgeWindowIds.slice(0, Math.min(this.currentRouteStep, bridgeWindowIds.length))
-    const campaignComplete = this.phase === 'paused' && this.pauseReason === 'campaign_complete'
+    const campaignComplete = this.phase === 'summary' && this.levelSummary?.nextLevel === null
 
     return {
       tick: this.tick,
@@ -282,6 +285,7 @@ export class GameEngine {
       balls: this.balls,
       ball: this.balls.find((ball) => ball.ownerWindowId) ?? this.balls[0] ?? null,
       transitionHint: null,
+      levelSummary: this.levelSummary,
       note: this.note,
     }
   }
@@ -296,6 +300,7 @@ export class GameEngine {
     this.pauseReason = null
     this.pausedPhase = null
     this.pausedNote = null
+    this.levelSummary = null
     this.resetLevelTimer()
     this.resetRouteState()
     this.phase = 'waiting'
@@ -316,6 +321,7 @@ export class GameEngine {
     this.pauseReason = null
     this.pausedPhase = null
     this.pausedNote = null
+    this.levelSummary = null
     this.streak = 0
     this.tick = 0
     this.note = this.getIdleNote(prefix)
@@ -336,6 +342,7 @@ export class GameEngine {
     this.pauseReason = null
     this.pausedPhase = null
     this.pausedNote = null
+    this.levelSummary = null
     this.resetLevelTimer()
     this.resetRouteState()
 
@@ -365,6 +372,24 @@ export class GameEngine {
     this.utilityCharges -= 1
     this.bridgePulseEndsAt = now + BRIDGE_PULSE_DURATION_MS
     this.note = `Bridge pulse live for ${formatDurationMs(BRIDGE_PULSE_DURATION_MS)}. Side locks suppressed.`
+    this.emitSnapshot()
+  }
+
+  continueFromSummary(): void {
+    if (this.phase !== 'summary') {
+      return
+    }
+
+    this.levelSummary = null
+    this.bridgePulseEndsAt = 0
+    this.pausedBridgePulseRemainingMs = 0
+    this.pauseReason = null
+    this.pausedPhase = null
+    this.pausedNote = null
+    this.resetLevelTimer()
+    this.resetRouteState()
+    this.phase = 'waiting'
+    this.note = `Level ${this.currentLevel} queued. Route the signal through each relay window in order.`
     this.emitSnapshot()
   }
 
@@ -496,7 +521,7 @@ export class GameEngine {
       this.bridgePulseEndsAt = 0
     }
 
-    if (this.phase === 'idle' || this.phase === 'paused') {
+    if (this.phase === 'idle' || this.phase === 'paused' || this.phase === 'summary') {
       return
     }
 
@@ -591,6 +616,8 @@ export class GameEngine {
     const wasCompleted = this.completedLevels.has(clearedLevel)
     const clearTimeMs = this.getCurrentLevelTime(now)
     const clearPerformance = this.recordLevelPerformance(clearedLevel, clearTimeMs, difficulty)
+    const levelClearScoreDelta = wasCompleted ? 0 : 1
+    const scoreDelta = levelClearScoreDelta + clearPerformance.medalScoreDelta
 
     this.completedLevels.add(clearedLevel)
     if (!wasCompleted) {
@@ -606,22 +633,46 @@ export class GameEngine {
     this.resetRouteState()
     this.lastStepAt = now
 
-    if (clearedLevel < MAX_LEVEL) {
-      this.maxUnlockedLevel = Math.max(this.maxUnlockedLevel, clearedLevel + 1)
-      this.currentLevel = Math.min(MAX_LEVEL, clearedLevel + 1)
-      this.phase = 'waiting'
-      this.note = `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)} at ${goalWindow?.title ?? 'the goal window'}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(clearPerformance.utilityChargeDelta)} Advancing to level ${this.currentLevel}.`
-      this.emitSnapshot()
-      return
+    const nextLevel = clearedLevel < MAX_LEVEL
+      ? Math.min(MAX_LEVEL, clearedLevel + 1)
+      : null
+
+    if (nextLevel !== null) {
+      this.maxUnlockedLevel = Math.max(this.maxUnlockedLevel, nextLevel)
+      this.currentLevel = nextLevel
+    } else {
+      this.maxUnlockedLevel = MAX_LEVEL
+      this.currentLevel = MAX_LEVEL
     }
 
-    this.maxUnlockedLevel = MAX_LEVEL
-    this.phase = 'paused'
-    this.pauseReason = 'campaign_complete'
+    this.levelSummary = {
+      clearedLevel,
+      clearTimeMs,
+      currentMedal: clearPerformance.currentMedal,
+      bestMedal: clearPerformance.bestMedal,
+      isNewMedal: clearPerformance.isNewMedal,
+      isBestTime: clearPerformance.isBestTime,
+      bestTimeMs: this.bestLevelTimesMs.get(clearedLevel) ?? clearTimeMs,
+      scoreDelta,
+      utilityChargeDelta: clearPerformance.utilityChargeDelta,
+      totalScore: this.score,
+      totalStreak: this.streak,
+      totalCompletedLevels: this.completedLevels.size,
+      relayCount: Math.max(0, difficulty.activeWindows - 2),
+      windowCount: difficulty.activeWindows,
+      goalWindowTitle: goalWindow?.title ?? null,
+      nextLevel,
+      nextDifficulty: nextLevel === null ? null : getDifficultyForLevel(nextLevel),
+    }
+
+    this.phase = 'summary'
+    this.pauseReason = null
     this.pausedPhase = null
     this.pausedNote = null
     this.pausedBridgePulseRemainingMs = 0
-    this.note = `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)} at ${goalWindow?.title ?? 'the goal window'}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(clearPerformance.utilityChargeDelta)} All levels unlocked. Select a level to replay.`
+    this.note = nextLevel === null
+      ? `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(clearPerformance.utilityChargeDelta)} Campaign complete.`
+      : `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(clearPerformance.utilityChargeDelta)} Level ${nextLevel} ready when you are.`
     this.emitSnapshot()
   }
 

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Bounced Level Report</title>
+    <style>
+      html,
+      body {
+        background:
+          radial-gradient(circle at 18% 20%, rgba(147, 247, 255, 0.08), transparent 30%),
+          radial-gradient(circle at 85% 12%, rgba(92, 123, 255, 0.12), transparent 30%),
+          linear-gradient(180deg, #07111b 0%, #04070d 48%, #020409 100%);
+        color: #e8f2ff;
+        color-scheme: dark;
+        margin: 0;
+        min-height: 100%;
+      }
+    </style>
+  </head>
+  <body class="summary-shell">
+    <main class="summary-app">
+      <section class="summary-window">
+        <div class="summary-scroll">
+          <header class="summary-window__header">
+            <p id="summary-eyebrow" class="summary-window__eyebrow">LEVEL REPORT</p>
+            <h1 id="summary-title" class="summary-window__title">Level Complete</h1>
+            <p id="summary-subtitle" class="summary-window__subtitle">Review the run and choose what to do next.</p>
+            <div class="summary-window__meta">
+              <span id="summary-medal" class="summary-medal" data-tier="none">NONE</span>
+              <span id="summary-route" class="summary-window__route">0 rooms / 0 relays</span>
+            </div>
+          </header>
+
+          <section class="summary-grid" aria-label="Level Stats">
+            <article class="summary-card">
+              <span class="summary-card__label">Clear Time</span>
+              <strong id="summary-clear-time" class="summary-card__value">0:00.0</strong>
+            </article>
+            <article class="summary-card">
+              <span class="summary-card__label">Best Time</span>
+              <strong id="summary-best-time" class="summary-card__value">0:00.0</strong>
+            </article>
+            <article class="summary-card">
+              <span class="summary-card__label">Score Gain</span>
+              <strong id="summary-score-delta" class="summary-card__value">+0</strong>
+            </article>
+            <article class="summary-card">
+              <span class="summary-card__label">Pulse Gain</span>
+              <strong id="summary-pulse-delta" class="summary-card__value">+0</strong>
+            </article>
+          </section>
+
+          <section class="summary-facts" aria-label="Run Notes">
+            <article class="summary-fact">
+              <span class="summary-fact__label">Goal</span>
+              <strong id="summary-goal-window" class="summary-fact__value">Pending</strong>
+            </article>
+            <article class="summary-fact">
+              <span class="summary-fact__label">Record</span>
+              <strong id="summary-record-note" class="summary-fact__value">No new record</strong>
+            </article>
+            <article class="summary-fact">
+              <span class="summary-fact__label">Campaign</span>
+              <strong id="summary-progress-note" class="summary-fact__value">0 / 100 cleared</strong>
+            </article>
+          </section>
+
+          <section class="summary-preview">
+            <p class="summary-preview__eyebrow">NEXT LEVEL PREVIEW</p>
+            <h2 id="summary-preview-title" class="summary-preview__title">Level 2</h2>
+            <p id="summary-preview-subtitle" class="summary-preview__subtitle">Preview unavailable.</p>
+            <div class="summary-grid summary-grid--compact" aria-label="Next Level Stats">
+              <article class="summary-card">
+                <span class="summary-card__label">Windows</span>
+                <strong id="summary-next-windows" class="summary-card__value">0</strong>
+              </article>
+              <article class="summary-card">
+                <span class="summary-card__label">Relays</span>
+                <strong id="summary-next-relays" class="summary-card__value">0</strong>
+              </article>
+              <article class="summary-card">
+                <span class="summary-card__label">Speed</span>
+                <strong id="summary-next-speed" class="summary-card__value">0</strong>
+              </article>
+              <article class="summary-card">
+                <span class="summary-card__label">Gold Time</span>
+                <strong id="summary-next-gold" class="summary-card__value">0:00.0</strong>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <footer class="summary-actions">
+          <button id="summary-next-button" class="primary" type="button">Start Next Level</button>
+          <button id="summary-replay-button" type="button">Replay Level</button>
+          <button id="summary-lobby-button" type="button">Return To Lobby</button>
+        </footer>
+        <p id="summary-status" class="summary-status" aria-live="polite">Awaiting level report...</p>
+      </section>
+    </main>
+
+    <script type="module" src="/src/summary/main.ts"></script>
+  </body>
+</html>

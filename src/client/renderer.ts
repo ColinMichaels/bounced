@@ -56,6 +56,11 @@ const XRAY_OBSTACLE_FILL = 'rgba(118, 236, 255, 0.08)'
 const XRAY_OBSTACLE_STROKE = 'rgba(168, 244, 255, 0.34)'
 const XRAY_LOCK_STROKE = 'rgba(132, 224, 255, 0.54)'
 const XRAY_LOCK_GLOW = 'rgba(132, 224, 255, 0.18)'
+const LIVE_OBSTACLE_FILL = 'rgba(16, 32, 48, 0.96)'
+const LIVE_OBSTACLE_STROKE = 'rgba(146, 244, 255, 0.48)'
+const LIVE_OBSTACLE_GLOW = 'rgba(108, 239, 255, 0.22)'
+const LIVE_OBSTACLE_STRIPE = 'rgba(170, 246, 255, 0.24)'
+const LIVE_OBSTACLE_HIGHLIGHT = 'rgba(230, 250, 255, 0.18)'
 
 export class BallRenderer {
   private readonly canvas: HTMLCanvasElement
@@ -289,11 +294,11 @@ export class BallRenderer {
       const localY = obstacle.y - bounds.contentY
       const stripeOffset = (obstacle.width + obstacle.height) % 14
 
-      this.context.fillStyle = 'rgba(12, 22, 34, 0.9)'
-      this.context.strokeStyle = 'rgba(108, 239, 255, 0.22)'
-      this.context.lineWidth = 1.5
-      this.context.shadowBlur = 10
-      this.context.shadowColor = 'rgba(108, 239, 255, 0.12)'
+      this.context.fillStyle = LIVE_OBSTACLE_FILL
+      this.context.strokeStyle = LIVE_OBSTACLE_STROKE
+      this.context.lineWidth = 1.8
+      this.context.shadowBlur = 14
+      this.context.shadowColor = LIVE_OBSTACLE_GLOW
       this.context.beginPath()
       this.context.roundRect(localX, localY, obstacle.width, obstacle.height, 10)
       this.context.fill()
@@ -304,8 +309,8 @@ export class BallRenderer {
       this.context.beginPath()
       this.context.roundRect(localX, localY, obstacle.width, obstacle.height, 10)
       this.context.clip()
-      this.context.strokeStyle = 'rgba(147, 247, 255, 0.14)'
-      this.context.lineWidth = 2
+      this.context.strokeStyle = LIVE_OBSTACLE_STRIPE
+      this.context.lineWidth = 2.2
 
       for (let stripeX = localX - obstacle.height + stripeOffset; stripeX < localX + obstacle.width + obstacle.height; stripeX += 12) {
         this.context.beginPath()
@@ -316,7 +321,7 @@ export class BallRenderer {
 
       this.context.restore()
 
-      this.context.fillStyle = 'rgba(216, 248, 255, 0.12)'
+      this.context.fillStyle = LIVE_OBSTACLE_HIGHLIGHT
       this.context.beginPath()
       this.context.roundRect(localX + 4, localY + 4, Math.max(0, obstacle.width - 8), Math.max(0, obstacle.height * 0.18), 6)
       this.context.fill()
