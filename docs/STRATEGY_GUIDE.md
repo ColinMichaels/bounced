@@ -206,7 +206,7 @@ The xray is best for structure. Do not rely on it as a permanent play mode. It i
 
 Just remember:
 
-- xray helps you read hidden barriers and side locks
+- xray helps you read hidden barriers, side locks, and masked route markers
 - xray does not let you score a hidden relay or goal
 
 ## Control The Ball Before You Extend The Route

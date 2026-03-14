@@ -56,6 +56,11 @@ const XRAY_OBSTACLE_FILL = 'rgba(118, 236, 255, 0.08)'
 const XRAY_OBSTACLE_STROKE = 'rgba(168, 244, 255, 0.34)'
 const XRAY_LOCK_STROKE = 'rgba(132, 224, 255, 0.54)'
 const XRAY_LOCK_GLOW = 'rgba(132, 224, 255, 0.18)'
+const XRAY_TARGET_RING = 'rgba(255, 124, 132, 0.84)'
+const XRAY_TARGET_OUTER = 'rgba(255, 154, 164, 0.42)'
+const XRAY_TARGET_FILL = 'rgba(255, 114, 126, 0.12)'
+const XRAY_TARGET_TEXT = 'rgba(255, 225, 228, 0.88)'
+const XRAY_TARGET_GLOW = 'rgba(255, 102, 120, 0.2)'
 const LIVE_OBSTACLE_FILL = 'rgba(16, 32, 48, 0.96)'
 const LIVE_OBSTACLE_STROKE = 'rgba(146, 244, 255, 0.48)'
 const LIVE_OBSTACLE_GLOW = 'rgba(108, 239, 255, 0.22)'
@@ -377,6 +382,7 @@ export class BallRenderer {
         originX: entry.windowState.contentX - bounds.contentX,
         originY: entry.windowState.contentY - bounds.contentY,
       })
+      this.drawXRayObjective(snapshot, roomRoute, entry.windowState, bounds)
 
       this.context.restore()
     }
@@ -435,6 +441,75 @@ export class BallRenderer {
       this.context.restore()
     }
 
+    this.context.restore()
+  }
+
+  private drawXRayObjective(
+    snapshot: GameSnapshot,
+    routeWindow: RouteWindowState | null,
+    windowState: WindowBoundsPayload,
+    bounds: WindowBoundsPayload,
+  ): void {
+    const activeTarget = snapshot.activeTarget?.windowId === windowState.id
+      ? snapshot.activeTarget
+      : null
+
+    if (!routeWindow || routeWindow.role === 'start' || !activeTarget) {
+      return
+    }
+    const centerX = activeTarget
+      ? activeTarget.x - bounds.contentX
+      : (windowState.contentX - bounds.contentX) + (windowState.contentWidth / 2)
+    const centerY = activeTarget
+      ? activeTarget.y - bounds.contentY
+      : (windowState.contentY - bounds.contentY) + (windowState.contentHeight / 2)
+    const radius = activeTarget
+      ? Math.max(14, activeTarget.radius)
+      : routeWindow.role === 'goal'
+        ? 24
+        : 20
+    const label = activeTarget
+      ? activeTarget.label
+      : routeWindow.role === 'goal'
+        ? 'GOAL'
+        : `RELAY ${routeWindow.order + 1}`
+    const sublabel = activeTarget
+      ? 'MASKED'
+      : routeWindow.status === 'locked'
+        ? 'HIDDEN'
+        : 'COVERED'
+
+    this.context.save()
+    this.context.textAlign = 'center'
+    this.context.setLineDash([6, 7])
+    this.context.lineWidth = 1.6
+    this.context.shadowBlur = 10
+    this.context.shadowColor = XRAY_TARGET_GLOW
+
+    this.context.beginPath()
+    this.context.strokeStyle = XRAY_TARGET_OUTER
+    this.context.arc(centerX, centerY, radius + 9, 0, Math.PI * 2)
+    this.context.stroke()
+
+    this.context.beginPath()
+    this.context.strokeStyle = XRAY_TARGET_RING
+    this.context.lineWidth = 4
+    this.context.arc(centerX, centerY, radius, 0, Math.PI * 2)
+    this.context.stroke()
+
+    this.context.setLineDash([])
+    this.context.shadowBlur = 0
+    this.context.beginPath()
+    this.context.fillStyle = XRAY_TARGET_FILL
+    this.context.arc(centerX, centerY, Math.max(6, radius - 6), 0, Math.PI * 2)
+    this.context.fill()
+
+    this.context.fillStyle = XRAY_TARGET_TEXT
+    this.context.font = '600 10px "SF Mono", "IBM Plex Mono", monospace'
+    this.context.fillText(label, centerX, centerY + 3)
+    this.context.globalAlpha = 0.72
+    this.context.font = '600 8px "SF Mono", "IBM Plex Mono", monospace'
+    this.context.fillText(sublabel, centerX, centerY + radius + 15)
     this.context.restore()
   }
 

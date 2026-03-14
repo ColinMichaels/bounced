@@ -163,6 +163,7 @@ Right now the xray view shows:
 
 - hidden barriers
 - hidden side locks
+- hidden relay and goal markers as red masked ghosts
 
 This is visual only. It does not change physics, scoring, or input. It is there to help you read the space better when rooms stack.
 
