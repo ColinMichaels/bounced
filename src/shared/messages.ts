@@ -36,6 +36,12 @@ export type GameMessage =
       }
     }
   | {
+      type: 'window_focus'
+      payload: {
+        id: string
+      }
+    }
+  | {
       type: 'summary_action'
       payload: {
         action: 'next' | 'replay' | 'lobby'

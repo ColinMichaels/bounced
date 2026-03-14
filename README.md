@@ -29,6 +29,8 @@ The level only clears when the ball touches:
 
 You cannot skip ahead.
 
+You also cannot score what you cannot see. If a relay or goal is covered by another front-most room, the ball touching that hidden target will not count until the target room is visible again.
+
 ## First Run
 
 1. Click `Start Game`.
@@ -147,6 +149,8 @@ Right now the xray view shows:
 - hidden side locks
 
 This is visual only. It does not change physics, scoring, or input. It is there to help you read the space better when rooms stack.
+
+That means xray helps you inspect hidden structure, but it does not let you clear hidden relays or goals through a covered room.
 
 ## Control Deck Commands
 

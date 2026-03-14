@@ -1,5 +1,5 @@
 import { MAX_DELTA_MS, SHOT_COOLDOWN_MS, SHOT_HIT_PADDING_PX, WINDOW_STALE_MS } from '../shared/constants'
-import { clamp, findContainingWindow, getConnectedWindows, pointInCircle, rectFromWindow, sortWindowsBySlot } from '../shared/geometry'
+import { clamp, findContainingWindow, getConnectedWindows, pointInCircle, pointInRect, rectFromWindow, sortWindowsBySlot } from '../shared/geometry'
 import type { GameChannel } from '../network/channel'
 import {
   compareMedalTiers,
@@ -125,6 +125,7 @@ export class GameEngine {
   private maxUnlockedLevel = 1
   private readonly completedLevels = new Set<number>()
   private levelSummary: LevelSummaryState | null = null
+  private frontWindowId: string | null = null
   private phase: GamePhase = 'idle'
   private pauseReason: PauseReason | null = null
   private pausedPhase: Exclude<GamePhase, 'idle' | 'paused'> | null = null
@@ -135,6 +136,10 @@ export class GameEngine {
 
   constructor(channel: GameChannel) {
     this.channel = channel
+  }
+
+  setFrontWindowId(windowId: string | null): void {
+    this.frontWindowId = windowId
   }
 
   restoreProgress(state: PlayerProgressState | null): void {
@@ -196,6 +201,7 @@ export class GameEngine {
     this.pausedPhase = null
     this.pausedNote = null
     this.levelSummary = null
+    this.frontWindowId = null
     this.tick = 0
     this.balls = []
     this.bonusCollectionCount = 0
@@ -301,6 +307,7 @@ export class GameEngine {
     this.pausedPhase = null
     this.pausedNote = null
     this.levelSummary = null
+    this.frontWindowId = null
     this.resetLevelTimer()
     this.resetRouteState()
     this.phase = 'waiting'
@@ -322,6 +329,7 @@ export class GameEngine {
     this.pausedPhase = null
     this.pausedNote = null
     this.levelSummary = null
+    this.frontWindowId = null
     this.streak = 0
     this.tick = 0
     this.note = this.getIdleNote(prefix)
@@ -343,6 +351,7 @@ export class GameEngine {
     this.pausedPhase = null
     this.pausedNote = null
     this.levelSummary = null
+    this.frontWindowId = null
     this.resetLevelTimer()
     this.resetRouteState()
 
@@ -386,6 +395,7 @@ export class GameEngine {
     this.pauseReason = null
     this.pausedPhase = null
     this.pausedNote = null
+    this.frontWindowId = null
     this.resetLevelTimer()
     this.resetRouteState()
     this.phase = 'waiting'
@@ -589,8 +599,12 @@ export class GameEngine {
       )
 
       if (routeBall) {
+        if (!this.isObjectiveVisible(activeTarget, activeWindows)) {
+          this.note = this.getOccludedObjectiveNote(activeTarget, activeWindows)
+        } else {
         this.handleRouteHit(activeWindows, activeTarget, difficulty, now)
         return
+        }
       }
     }
 
@@ -1648,6 +1662,33 @@ export class GameEngine {
         : 'Idle. Arm the field to begin at level 1.'
 
     return prefix ? `${prefix} ${base}` : base
+  }
+
+  private isObjectiveVisible(activeTarget: TargetState, activeWindows: WindowState[]): boolean {
+    if (!this.frontWindowId || this.frontWindowId === activeTarget.windowId) {
+      return true
+    }
+
+    const frontWindow = activeWindows.find((windowState) => windowState.id === this.frontWindowId)
+    if (!frontWindow) {
+      return true
+    }
+
+    return !pointInRect(activeTarget.x, activeTarget.y, rectFromWindow(frontWindow))
+  }
+
+  private getOccludedObjectiveNote(activeTarget: TargetState, activeWindows: WindowState[]): string {
+    const targetWindow = activeWindows.find((windowState) => windowState.id === activeTarget.windowId)
+    const frontWindow = this.frontWindowId
+      ? activeWindows.find((windowState) => windowState.id === this.frontWindowId)
+      : null
+
+    if (!targetWindow || !frontWindow || frontWindow.id === targetWindow.id) {
+      return this.note
+    }
+
+    const objectiveLabel = activeTarget.kind === 'goal' ? 'Goal' : activeTarget.label
+    return `${objectiveLabel} is masked by ${frontWindow.title}. Bring ${targetWindow.title} to the front to score it.`
   }
 
   private emitSnapshot(): void {

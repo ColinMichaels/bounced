@@ -45,6 +45,18 @@ A better pattern is:
 
 Simple routes are easier to read, and they also make it easier to predict when the ball will reach a relay.
 
+## Visibility Is Part Of The Puzzle
+
+Relays and goals do not count just because the ball touched their world position.
+
+If the live target is hidden behind another front-most room:
+
+- the hit will not score
+- the route will not advance
+- you need to uncover that room or bring it back to the front
+
+This means giant “cover everything” overlaps are weaker than they look. They may help you inspect geometry with xray, but they can also hide the exact relay or goal you need to clear.
+
 ## Use Walls As Steering
 
 The ball is always bouncing.
@@ -170,6 +182,11 @@ Use it when:
 - you want to line up a route while keeping two rooms overlapped
 
 The xray is best for structure. Do not rely on it as a permanent play mode. It is a quick inspection tool.
+
+Just remember:
+
+- xray helps you read hidden barriers and side locks
+- xray does not let you score a hidden relay or goal
 
 ## Control The Ball Before You Extend The Route
 

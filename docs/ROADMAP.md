@@ -30,6 +30,12 @@ Not implemented yet:
 - deeper spendable upgrade economy
 - decoys / multiple active balls as a real mode
 
+## Immediate Follow-Up TODOs
+
+- Playtest the new "hidden objectives do not score" rule across Chrome window-focus edge cases, especially title-bar dragging, overlap stacks, and macOS vs Windows popup behavior.
+- Add browser-level smoke coverage for the highest-risk flows: popup spawn/recall, summary-window next/replay/lobby actions, and close-a-room abort behavior.
+- Keep trimming the summary report if it regrows; the current rule is that primary actions must stay visible without depending on a tall popup window.
+
 ## Near-Term TODO
 
 ### 1. Second helper utility

@@ -224,6 +224,11 @@ function armSession(level: number): boolean {
   awaitingFreshBoundsSince = Date.now()
   syncDeckPresentation()
   windowManager.recallAll()
+  const initialFrontHandle = [...handles]
+    .filter((handle) => handle.ref && !handle.ref.closed)
+    .sort((left, right) => left.slot - right.slot)
+    .at(-1)
+  engine.setFrontWindowId(initialFrontHandle?.id ?? null)
   renderWarnings()
   return true
 }
@@ -312,7 +317,16 @@ function handleMessage(message: GameMessage): void {
       }
 
       followWindows = true
+      engine.setFrontWindowId(message.payload.preferredId)
       windowManager.recallAll(message.payload.preferredId)
+      break
+    case 'window_focus':
+      if (pausedForDeckFocus) {
+        resumeGameplay(message.payload.id)
+        break
+      }
+
+      engine.setFrontWindowId(message.payload.id)
       break
     case 'summary_action':
       handleSummaryAction(message.payload.action)
@@ -337,6 +351,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     pausedForDeckFocus = false
     desiredWindowCount = 0
     followWindows = true
+    engine.setFrontWindowId(null)
     lastFocusedOwnerId = null
     lastFollowAt = 0
     lastLayoutKey = ''
@@ -589,6 +604,7 @@ function stopActiveSession(prefix = 'Session ended.'): void {
   lastFollowAt = 0
   lastLayoutKey = ''
   awaitingFreshBoundsSince = 0
+  engine.setFrontWindowId(null)
   windowManager.closeAll()
   audio.pause()
   engine.endGame(prefix)
@@ -634,6 +650,7 @@ function syncWindowFollow(snapshot: GameSnapshot): void {
   }
 
   windowManager.recallAll(ownerId)
+  engine.setFrontWindowId(ownerId)
 
   lastFocusedOwnerId = ownerId
   lastFollowAt = now
@@ -656,6 +673,7 @@ function resumeGameplay(preferredId?: string | null): void {
   followWindows = true
   lastFocusedOwnerId = null
   lastFollowAt = 0
+  engine.setFrontWindowId(nextPreferredId)
   windowManager.recallAll(nextPreferredId)
   syncDeckPresentation()
 }
@@ -715,6 +733,7 @@ function abortSessionDueToClosedWindow(windowId: string): void {
   lastFollowAt = 0
   lastLayoutKey = ''
   awaitingFreshBoundsSince = 0
+  engine.setFrontWindowId(null)
   windowManager.closeAll()
   audio.pause()
   engine.endGame(`${closedWindowTitle} was closed during play.`)

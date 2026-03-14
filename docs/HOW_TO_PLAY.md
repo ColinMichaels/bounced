@@ -107,6 +107,12 @@ You must route the ball through:
 
 You cannot skip ahead. If the ball reaches the goal before the relays are cleared, nothing happens.
 
+There is also one important visibility rule:
+
+- a relay or goal only counts if it is actually visible in the room on top
+- if another room is covering that target, the ball touching the hidden spot does not score it
+- if you want the hit to count, bring the target room back to the front or uncover it
+
 ## Bonuses
 
 There are two bonus styles in the current game.
@@ -180,6 +186,11 @@ Right now the xray view shows:
 - hidden blocked sides
 
 This does not change gameplay. It is only a visual aid to help you understand what is underneath.
+
+Important:
+
+- xray does not make hidden relays or goals scoreable
+- if you cannot actually see the live target, you cannot clear it
 
 ## Pause And Resume
 
