@@ -355,6 +355,18 @@ export class GameEngine {
     return this.findContainingWindowForPhysics(candidateWindows, x, y, preferredWindowId)?.id ?? null
   }
 
+  debugResolveMotionWindowIds(
+    x: number,
+    y: number,
+    preferredWindowId: string | null = null,
+    now = Date.now(),
+  ): string[] {
+    const difficulty = getDifficultyForLevel(this.currentLevel)
+    const activeWindows = this.getActiveWindows(difficulty.activeWindows)
+
+    return this.getMotionWindowsForPoint(activeWindows, x, y, preferredWindowId, now).map((windowState) => windowState.id)
+  }
+
   restoreProgress(state: PlayerProgressState | null): void {
     if (!state) {
       return
@@ -829,7 +841,7 @@ export class GameEngine {
       const seedWindow = this.findContainingWindowForPhysics(activeWindows, ball.x, ball.y, ball.ownerWindowId)
         ?? activeWindows.find((windowState) => windowState.id === ball.ownerWindowId)
         ?? activeWindows[0]
-      const motionWindows = getConnectedWindows(activeWindows, seedWindow.id, this.getEffectiveBlockedEdges(now))
+      const motionWindows = this.getMotionWindowsForPoint(activeWindows, ball.x, ball.y, seedWindow.id, now)
       const motionObstacles = obstacles.filter((obstacle) =>
         motionWindows.some((windowState) => windowState.id === obstacle.windowId),
       )
@@ -2054,6 +2066,37 @@ export class GameEngine {
     }
 
     return containingWindows.find((windowState) => windowState.id === preferredWindowId) ?? containingWindows[0]
+  }
+
+  private getMotionWindowsForPoint(
+    activeWindows: WindowState[],
+    x: number,
+    y: number,
+    preferredWindowId: string | null,
+    now: number,
+  ): WindowState[] {
+    if (activeWindows.length === 0) {
+      return []
+    }
+
+    const blockedEdges = this.getEffectiveBlockedEdges(now)
+    const seedWindow = this.findContainingWindowForPhysics(activeWindows, x, y, preferredWindowId)
+      ?? activeWindows.find((windowState) => windowState.id === preferredWindowId)
+      ?? activeWindows[0]
+    const containingWindows = activeWindows.filter((windowState) => pointInRect(x, y, rectFromWindow(windowState)))
+    const seedWindows = containingWindows.length > 0 ? containingWindows : [seedWindow]
+    const motionWindows = new Map<string, WindowState>()
+
+    // When the ball sits in stacked overlap space, merge the reachable regions from every room
+    // under that point so the xray room boundary stays visual instead of becoming a solid wall.
+    for (const windowState of seedWindows) {
+      for (const connectedWindow of getConnectedWindows(activeWindows, windowState.id, blockedEdges)) {
+        motionWindows.set(connectedWindow.id, connectedWindow)
+      }
+    }
+
+    motionWindows.set(seedWindow.id, seedWindow)
+    return sortWindowsBySlot([...motionWindows.values()])
   }
 
   private emitSnapshot(): void {

@@ -10,6 +10,7 @@ interface HostHarness {
   attemptActiveTargetHit: () => boolean
   coverActiveTarget: () => boolean
   resolveContainingWindowId: (x: number, y: number, preferredWindowId: string | null) => string | null
+  resolveMotionWindowIds: (x: number, y: number, preferredWindowId: string | null) => string[]
   closeWindow: (id: string) => boolean
   setFrontWindow: (id: string | null) => void
   pauseForDeckFocus: () => void
@@ -135,6 +136,22 @@ async function resolveContainingWindowId(
     }
 
     return harness.resolveContainingWindowId(pointX, pointY, preferredId)
+  }, { x, y, preferredWindowId })
+}
+
+async function resolveMotionWindowIds(
+  page: Page,
+  x: number,
+  y: number,
+  preferredWindowId: string | null,
+): Promise<string[]> {
+  return page.evaluate(({ x: pointX, y: pointY, preferredWindowId: preferredId }) => {
+    const harness = (window as Window & { __BOUNCED_TEST__?: HostHarness }).__BOUNCED_TEST__
+    if (!harness) {
+      throw new Error('Missing host test harness.')
+    }
+
+    return harness.resolveMotionWindowIds(pointX, pointY, preferredId)
   }, { x, y, preferredWindowId })
 }
 
@@ -434,16 +451,32 @@ test('stacked overlap ownership follows the front room instead of the xray room 
   snapshot = await getSnapshot(host)
   const overlapTarget = snapshot.activeTarget
   expect(overlapTarget).toBeTruthy()
+  const overlappingWindowIds = snapshot.windows
+    .filter((windowState) =>
+      snapshot.activeWindowIds.includes(windowState.id)
+      && overlapTarget!.x >= windowState.contentX
+      && overlapTarget!.x <= windowState.contentX + windowState.contentWidth
+      && overlapTarget!.y >= windowState.contentY
+      && overlapTarget!.y <= windowState.contentY + windowState.contentHeight,
+    )
+    .map((windowState) => windowState.id)
+  expect(overlappingWindowIds.length).toBeGreaterThan(1)
 
   await setFrontWindow(host, coverWindowId)
   await expect
     .poll(() => resolveContainingWindowId(host, overlapTarget!.x, overlapTarget!.y, targetWindowId))
     .toBe(coverWindowId)
+  await expect
+    .poll(() => resolveMotionWindowIds(host, overlapTarget!.x, overlapTarget!.y, coverWindowId))
+    .toEqual(expect.arrayContaining(overlappingWindowIds))
 
   await setFrontWindow(host, targetWindowId)
   await expect
     .poll(() => resolveContainingWindowId(host, overlapTarget!.x, overlapTarget!.y, coverWindowId))
     .toBe(targetWindowId)
+  await expect
+    .poll(() => resolveMotionWindowIds(host, overlapTarget!.x, overlapTarget!.y, targetWindowId))
+    .toEqual(expect.arrayContaining(overlappingWindowIds))
 
   await context.close()
 })
