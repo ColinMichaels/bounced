@@ -1,4 +1,4 @@
-export type GamePhase = 'idle' | 'waiting' | 'running' | 'paused'
+export type GamePhase = 'idle' | 'waiting' | 'running' | 'paused' | 'summary'
 
 export interface WindowBoundsPayload {
   id: string
@@ -138,6 +138,26 @@ export interface DifficultyLevel {
   medalThresholds: MedalThresholds
 }
 
+export interface LevelSummaryState {
+  clearedLevel: number
+  clearTimeMs: number
+  currentMedal: MedalTier
+  bestMedal: MedalTier
+  isNewMedal: boolean
+  isBestTime: boolean
+  bestTimeMs: number
+  scoreDelta: number
+  utilityChargeDelta: number
+  totalScore: number
+  totalStreak: number
+  totalCompletedLevels: number
+  relayCount: number
+  windowCount: number
+  goalWindowTitle: string | null
+  nextLevel: number | null
+  nextDifficulty: DifficultyLevel | null
+}
+
 export interface PlayerProgressState {
   version: 3
   score: number
@@ -182,5 +202,6 @@ export interface GameSnapshot {
   balls: BallState[]
   ball: BallState | null
   transitionHint: TransitionHint | null
+  levelSummary: LevelSummaryState | null
   note: string
 }

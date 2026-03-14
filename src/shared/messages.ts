@@ -36,6 +36,12 @@ export type GameMessage =
       }
     }
   | {
+      type: 'summary_action'
+      payload: {
+        action: 'next' | 'replay' | 'lobby'
+      }
+    }
+  | {
       type: 'layout_hint'
       payload: {
         id: string

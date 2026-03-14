@@ -547,6 +547,10 @@ function getPhaseLabel(snapshot: GameSnapshot): string {
     return 'PAUSED'
   }
 
+  if (snapshot.phase === 'summary') {
+    return 'CLEAR'
+  }
+
   return 'LIVE'
 }
 

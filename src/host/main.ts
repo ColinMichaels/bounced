@@ -31,6 +31,7 @@ const cancelLevelChangeButton = must<HTMLButtonElement>('cancel-level-change-but
 const scoreValue = must<HTMLElement>('score-value')
 const streakValue = must<HTMLElement>('streak-value')
 const bestStreakValue = must<HTMLElement>('best-streak-value')
+const timerHudValue = must<HTMLElement>('timer-hud-value')
 const timerValue = must<HTMLElement>('timer-value')
 const bestTimeValue = must<HTMLElement>('best-time-value')
 const medalValue = must<HTMLElement>('medal-value')
@@ -75,6 +76,8 @@ let renderFrameId = 0
 let lastRenderAt = 0
 let popupAccessState = loadPopupAccessState()
 let pendingLevelSelection: number | null = null
+let summaryWindowRef: Window | null = null
+let lastSummaryKey = ''
 
 engine.restoreProgress(progressStorage.load())
 engine.subscribe(handleEngineSnapshot)
@@ -160,35 +163,21 @@ startButton.addEventListener('click', () => {
   }
 
   const snapshot = engine.getSnapshot()
-  const initialLevel = snapshot.selectedLevel
-  const initialWindowCount = getDifficultyForLevel(initialLevel).activeWindows
-  desiredWindowCount = initialWindowCount
-  lastLayoutKey = `${initialLevel}:${initialWindowCount}`
-  const handles = windowManager.ensureWindowPool(initialWindowCount, initialLevel, { relayout: true })
-  sendLayoutHints(handles)
-  const openCount = windowManager.getOpenCount()
-
-  if (openCount < initialWindowCount) {
-    setPopupAccessState('blocked')
-    hasStarted = false
-    readinessWarning = 'Browser blocked the play windows. Allow popups for this site, then press start again.'
-    renderWarnings()
-    renderSnapshot(engine.getSnapshot())
+  if (snapshot.phase === 'summary') {
+    engine.continueFromSummary()
+    armQueuedSession()
     return
   }
 
-  setPopupAccessState('allowed')
-  readinessWarning = ''
+  if (snapshot.phase === 'waiting') {
+    armQueuedSession()
+    return
+  }
 
-  hasStarted = true
-  pausedForDeckFocus = false
-  followWindows = true
-  lastFocusedOwnerId = null
-  lastFollowAt = 0
-  awaitingFreshBoundsSince = Date.now()
-  syncDeckPresentation()
-  windowManager.recallAll()
-  renderWarnings()
+  if (!armSession(snapshot.selectedLevel)) {
+    return
+  }
+
   engine.start(Date.now())
 })
 
@@ -207,15 +196,57 @@ stopButton.addEventListener('click', () => {
   stopActiveSession()
 })
 
+function armSession(level: number): boolean {
+  const initialWindowCount = getDifficultyForLevel(level).activeWindows
+  desiredWindowCount = initialWindowCount
+  lastLayoutKey = `${level}:${initialWindowCount}`
+  const handles = windowManager.ensureWindowPool(initialWindowCount, level, { relayout: true })
+  sendLayoutHints(handles)
+  const openCount = windowManager.getOpenCount()
+
+  if (openCount < initialWindowCount) {
+    setPopupAccessState('blocked')
+    hasStarted = false
+    readinessWarning = 'Browser blocked the play windows. Allow popups for this site, then press start again.'
+    renderWarnings()
+    renderSnapshot(engine.getSnapshot())
+    return false
+  }
+
+  closeSummaryWindow()
+  setPopupAccessState('allowed')
+  readinessWarning = ''
+  hasStarted = true
+  pausedForDeckFocus = false
+  followWindows = true
+  lastFocusedOwnerId = null
+  lastFollowAt = 0
+  awaitingFreshBoundsSince = Date.now()
+  syncDeckPresentation()
+  windowManager.recallAll()
+  renderWarnings()
+  return true
+}
+
+function armQueuedSession(): void {
+  const snapshot = engine.getSnapshot()
+  if (!armSession(snapshot.selectedLevel)) {
+    return
+  }
+
+  renderSnapshot(engine.getSnapshot())
+}
+
 window.addEventListener('beforeunload', () => {
   audio.dispose()
   channel.close()
+  closeSummaryWindow()
   windowManager.closeAll()
   ticker.terminate()
 })
 
 function handleEngineSnapshot(snapshot: GameSnapshot): void {
-  if (pausedForDeckFocus && hasStarted && snapshot.phase !== 'idle' && snapshot.phase !== 'paused' && !snapshot.campaignComplete) {
+  if (pausedForDeckFocus && hasStarted && snapshot.phase !== 'idle' && snapshot.phase !== 'paused' && snapshot.phase !== 'summary' && !snapshot.campaignComplete) {
     audio.pause()
     engine.pause(Date.now())
     return
@@ -283,6 +314,9 @@ function handleMessage(message: GameMessage): void {
       followWindows = true
       windowManager.recallAll(message.payload.preferredId)
       break
+    case 'summary_action':
+      handleSummaryAction(message.payload.action)
+      break
     case 'register_window':
     case 'snapshot':
       break
@@ -298,16 +332,22 @@ function renderSnapshot(snapshot: GameSnapshot): void {
 
   progressStorage.save(progress)
 
-  if (hasStarted && snapshot.campaignComplete) {
+  if (snapshot.phase === 'summary' && snapshot.levelSummary) {
     hasStarted = false
     pausedForDeckFocus = false
     desiredWindowCount = 0
+    followWindows = true
     lastFocusedOwnerId = null
     lastFollowAt = 0
     lastLayoutKey = ''
     awaitingFreshBoundsSince = 0
-    readinessWarning = 'Campaign complete. Windows cleared. Choose any unlocked level and start the game to replay.'
+    readinessWarning = ''
+    audio.pause()
     windowManager.closeAll()
+    ensureSummaryWindow(snapshot)
+  } else {
+    lastSummaryKey = ''
+    closeSummaryWindow()
   }
 
   if (hasStarted && snapshot.phase !== 'idle' && layoutKey !== lastLayoutKey) {
@@ -329,7 +369,9 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   scoreValue.textContent = String(snapshot.score)
   streakValue.textContent = String(snapshot.streak)
   bestStreakValue.textContent = String(snapshot.bestStreak)
-  timerValue.textContent = formatDurationMs(snapshot.levelElapsedMs)
+  const formattedTimer = formatDurationMs(snapshot.levelElapsedMs)
+  timerHudValue.textContent = formattedTimer
+  timerValue.textContent = formattedTimer
   bestTimeValue.textContent = snapshot.bestLevelTimeMs === null ? '--:--.-' : formatDurationMs(snapshot.bestLevelTimeMs)
   medalValue.textContent = formatMedalTier(snapshot.bestLevelMedal)
   medalValue.dataset.tier = snapshot.bestLevelMedal
@@ -449,8 +491,96 @@ function closeLevelChangeDialog(): void {
   }
 }
 
+function ensureSummaryWindow(snapshot: GameSnapshot): void {
+  const summary = snapshot.levelSummary
+  if (!summary) {
+    return
+  }
+
+  const summaryKey = [
+    summary.clearedLevel,
+    summary.clearTimeMs,
+    summary.bestMedal,
+    summary.nextLevel ?? 'complete',
+  ].join(':')
+
+  if (summaryWindowRef && !summaryWindowRef.closed) {
+    if (summaryKey !== lastSummaryKey) {
+      summaryWindowRef.focus()
+    }
+    lastSummaryKey = summaryKey
+    return
+  }
+
+  const width = 520
+  const height = 720
+  const left = Math.max(0, window.screenX + Math.round((window.outerWidth - width) / 2))
+  const top = Math.max(0, window.screenY + Math.round((window.outerHeight - height) / 2))
+  const url = new URL('./summary.html', window.location.href)
+  url.searchParams.set('channel', channelName)
+  url.searchParams.set('session', sessionId)
+  const features = [
+    `width=${width}`,
+    `height=${height}`,
+    `left=${left}`,
+    `top=${top}`,
+    'popup=yes',
+    'resizable=no',
+    'scrollbars=no',
+    'toolbar=no',
+    'location=no',
+    'menubar=no',
+    'status=no',
+  ].join(',')
+
+  summaryWindowRef = window.open(url.toString(), 'bounced-level-summary', features)
+  if (!summaryWindowRef) {
+    readinessWarning = 'Level report popup was blocked. Use the control deck to continue or return to the lobby.'
+    renderWarnings()
+    return
+  }
+
+  summaryWindowRef.focus()
+  lastSummaryKey = summaryKey
+}
+
+function closeSummaryWindow(): void {
+  if (summaryWindowRef && !summaryWindowRef.closed) {
+    summaryWindowRef.close()
+  }
+
+  summaryWindowRef = null
+  lastSummaryKey = ''
+}
+
+function handleSummaryAction(action: 'next' | 'replay' | 'lobby'): void {
+  const summary = latestSnapshot.levelSummary
+  if (!summary || latestSnapshot.phase !== 'summary') {
+    return
+  }
+
+  if (action === 'lobby') {
+    stopActiveSession('Returned to the control board lobby.')
+    return
+  }
+
+  if (action === 'replay') {
+    engine.selectLevel(summary.clearedLevel)
+    armQueuedSession()
+    return
+  }
+
+  if (summary.nextLevel === null) {
+    return
+  }
+
+  engine.continueFromSummary()
+  armQueuedSession()
+}
+
 function stopActiveSession(prefix = 'Session ended.'): void {
   closeLevelChangeDialog()
+  closeSummaryWindow()
   hasStarted = false
   pausedForDeckFocus = false
   desiredWindowCount = 0
@@ -478,6 +608,8 @@ function renderWarnings(): void {
 
   if (pausedForDeckFocus) {
     warnings.push('Session paused while the control deck is focused. Press Resume Game or click a room to continue.')
+  } else if (latestSnapshot.phase === 'summary') {
+    warnings.push('Level report ready. Use the summary window to start the next level, replay, or return to the lobby.')
   } else if (!readinessWarning && hasStarted) {
     warnings.push('Use Resume Game or click any game window to recall the cluster. Closing any room ends the current session.')
   }
@@ -592,6 +724,17 @@ function abortSessionDueToClosedWindow(windowId: string): void {
 function updateHostFocusState(nextHasFocus: boolean): void {
   const previousHasFocus = hostHasFocus
   hostHasFocus = nextHasFocus
+
+  if (
+    nextHasFocus
+    && !previousHasFocus
+    && latestSnapshot.phase === 'summary'
+    && summaryWindowRef
+    && !summaryWindowRef.closed
+  ) {
+    stopActiveSession('Returned to the control board lobby.')
+    return
+  }
 
   if (hasStarted && nextHasFocus && !previousHasFocus) {
     pauseForControlDeck()
@@ -782,8 +925,13 @@ function hasFreshWindowBounds(snapshot: GameSnapshot, since: number): boolean {
 }
 
 function syncDeckPresentation(): void {
-  hostShell.dataset.sessionState = hasStarted ? 'armed' : 'idle'
-  hostShell.dataset.deckFocus = hasStarted && !hostHasFocus && !pausedForDeckFocus ? 'background' : 'foreground'
+  const summaryActive = latestSnapshot.phase === 'summary' && !!summaryWindowRef && !summaryWindowRef.closed
+  hostShell.dataset.sessionState = hasStarted || summaryActive ? 'armed' : 'idle'
+  hostShell.dataset.deckFocus = hasStarted
+    ? (!hostHasFocus && !pausedForDeckFocus ? 'background' : 'foreground')
+    : summaryActive
+      ? 'background'
+      : 'foreground'
 }
 
 function loadPopupAccessState(): PopupAccessState {

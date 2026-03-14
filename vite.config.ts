@@ -6,6 +6,7 @@ export default defineConfig({
       input: {
         host: 'index.html',
         client: 'client.html',
+        summary: 'summary.html',
       },
     },
   },
