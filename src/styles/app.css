@@ -99,18 +99,18 @@ button.utility {
 }
 
 .host-shell {
-  padding: 1rem;
+  padding: 0.5rem;
   position: relative;
 }
 
 .session-timer {
   display: flex;
   justify-content: flex-end;
-  margin: 0 auto 0.75rem;
+  margin: 0 auto;
   max-width: 1120px;
   pointer-events: none;
   position: sticky;
-  top: 1rem;
+  top: 0;
   z-index: 3;
 }
 
