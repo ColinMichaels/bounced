@@ -6,10 +6,39 @@
     <title>Bounced Host</title>
   </head>
   <body class="host-shell">
-    <aside class="session-timer" aria-live="polite">
+    <aside id="session-timer" class="session-timer" aria-live="polite">
       <div class="session-timer__card">
-        <span class="session-timer__label">Timer</span>
-        <strong id="timer-hud-value">0:00.0</strong>
+        <div class="session-timer__row session-timer__row--top">
+          <div class="session-timer__timer">
+            <span class="session-timer__label">In-Game HUD</span>
+            <strong id="timer-hud-value">0:00.0</strong>
+          </div>
+          <div class="session-timer__meta">
+            <span class="session-timer__chip">
+              <span class="session-timer__chip-label">Medal</span>
+              <strong id="hud-target-time-value">BRONZE 0:00.0</strong>
+            </span>
+            <span class="session-timer__chip">
+              <span class="session-timer__chip-label">Charges</span>
+              <strong id="hud-utility-charge-value">0</strong>
+            </span>
+            <span class="session-timer__chip">
+              <span class="session-timer__chip-label">State</span>
+              <strong id="hud-utility-state-value">OFFLINE</strong>
+            </span>
+          </div>
+        </div>
+        <div class="session-timer__row session-timer__row--bottom">
+          <ul id="hud-buff-list" class="session-timer__buffs">
+            <li class="is-empty">Base Kit</li>
+          </ul>
+          <div class="session-timer__actions">
+            <button id="hud-recall-button" type="button">Rooms</button>
+            <button id="hud-utility-button" class="utility" type="button">Pulse</button>
+            <button id="hud-time-brake-button" class="utility" type="button">Brake</button>
+            <button id="hud-lobby-button" type="button">Lobby</button>
+          </div>
+        </div>
       </div>
     </aside>
 
@@ -22,8 +51,6 @@
       <section class="control-panel">
         <div class="button-row">
           <button id="start-button" class="primary">Start Game</button>
-          <button id="utility-button" class="utility">Bridge Pulse</button>
-          <button id="time-brake-button" class="utility">Time Brake</button>
           <button id="respawn-button">Reseed Target</button>
           <button id="stop-button">End Game</button>
         </div>
@@ -71,6 +98,10 @@
           <strong id="utility-charge-value">0</strong>
         </article>
         <article>
+          <span class="label">Signal Credits</span>
+          <strong id="upgrade-credit-value">0</strong>
+        </article>
+        <article>
           <span class="label">Utility</span>
           <strong id="utility-state-value">OFFLINE</strong>
         </article>
@@ -95,6 +126,12 @@
           <h2>Signal Windows</h2>
           <ul id="window-list" class="window-list">
             <li>Waiting for play windows.</li>
+          </ul>
+        </article>
+        <article class="panel">
+          <h2>Signal Lab</h2>
+          <ul id="upgrade-list" class="upgrade-list">
+            <li>Earn signal credits from caches, first clears, and medal upgrades. Spend them between levels in the summary window.</li>
           </ul>
         </article>
       </section>

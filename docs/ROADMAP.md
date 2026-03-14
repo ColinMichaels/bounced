@@ -20,6 +20,7 @@ Implemented now:
 - campaign unlock flow across 100 generated levels
 - generated clear-time medals with persistent best ranks
 - shared utility charges with `bridge pulse` and `time brake`
+- signal credits and summary-window run upgrades
 - host-side synthesized audio feedback
 - focused-room xray overlays for overlapped hidden structure
 - guarded level-switch confirmation during active runs
@@ -28,13 +29,13 @@ Implemented now:
 
 Not implemented yet:
 
-- deeper spendable upgrade economy
+- deeper branching upgrade economy
 - decoys / multiple active balls as a real mode
 
 ## Immediate Follow-Up TODOs
 
-- Playtest the stack-aware hidden-objective rule across real Chrome window-focus edge cases, especially title-bar dragging and macOS vs Windows popup behavior.
-- Balance the shared utility economy now that charges can be spent on both bridge pulse and time brake.
+- Manually compare native title-bar dragging and popup focus ordering on macOS Chrome vs Windows Chrome. Chromium smoke now covers overlap masking, popup recall, summary flow, summary action visibility, and room-close abort.
+- Balance the shared utility and signal-credit economy now that summary upgrades can amplify utilities and target readability.
 - Keep trimming the summary report if it regrows; the current rule is that primary actions must stay visible without depending on a tall popup window.
 
 ## Near-Term TODO
@@ -50,12 +51,14 @@ Current state:
 - ambient bonuses can award score, time, or utility charges
 - medal improvements already award score and extra charges
 - players can now spend those charges on both bridge pulse and time brake
+- first clears, bonuses, and medal upgrades now award signal credits
+- the summary window can spend those credits on `reserve cells`, `signal lens`, and `pulse coil`
 
 Next shape:
 
-- add more spendable run resources or unlock-style perks
-- make reward choices matter more than raw score gain
-- decide whether some rewards should be player-choice based instead of fixed
+- add more branching upgrades instead of a single linear shop row
+- make reward choices matter more than raw score gain and safe utility stockpiling
+- decide whether some rewards should become player-choice pickups inside the level instead of fixed summary purchases
 
 ### 2. Xray and overlap readability
 

@@ -167,6 +167,12 @@ export class WindowManager {
       .filter((handle) => handle.ref && !handle.ref.closed)
       .sort((left, right) => left.slot - right.slot)
 
+    try {
+      this.hostWindow.blur()
+    } catch {
+      // Some browsers ignore scripted blur requests.
+    }
+
     for (const handle of openHandles) {
       if (handle.id === preferredId) {
         continue
@@ -177,6 +183,12 @@ export class WindowManager {
 
     if (preferredId) {
       this.focusWindow(preferredId)
+    }
+
+    try {
+      this.hostWindow.blur()
+    } catch {
+      // Some browsers ignore scripted blur requests.
     }
   }
 

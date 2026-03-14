@@ -91,6 +91,7 @@ If the ball touches it:
 
 - you get bonus score
 - you get a utility charge
+- you get a signal credit
 
 If the ball leaves that relay room first, the bonus is gone.
 
@@ -103,6 +104,7 @@ These can reward:
 - score
 - a utility charge
 - a small time reduction
+- signal credits that feed the run-upgrade economy
 
 These are optional. They help, but the route objective always comes first.
 
@@ -139,6 +141,23 @@ Worst use:
 - spending it when the route is still fundamentally wrong
 - using it too early, before the ball reaches the dangerous part of the layout
 
+## Signal Credits And Run Upgrades
+
+`Signal Credits` are the run-only spendable resource.
+
+You earn them from:
+
+- first clears
+- relay bonuses
+- ambient caches
+- medal improvements
+
+Spend them in the summary window between levels on:
+
+- `Reserve Cells`: start each level with extra utility charges
+- `Signal Lens`: widen relay and goal targets for the current run
+- `Pulse Coil`: extend `Bridge Pulse` and `Time Brake` duration
+
 ## Medals And Time
 
 Every level is also a time trial.
@@ -173,8 +192,10 @@ That means xray helps you inspect hidden structure, but it does not let you clea
 
 - `Start Game`: opens or relayouts the required rooms and starts the run
 - `Resume Game`: recalls the room cluster and resumes play if the control deck paused the session
-- `Bridge Pulse`: spends one utility charge to suppress side locks
-- `Time Brake`: spends one utility charge to slow the signal briefly
+- `Rooms` HUD action: pulls the live game windows back to the front and becomes `Resume` while paused
+- `Pulse` HUD action: spends one utility charge to suppress side locks
+- `Brake` HUD action: spends one utility charge to slow the signal briefly
+- `Lobby` HUD action: exits the live run and returns to the control board
 - `Reseed Target`: respawns the route target and ball for the current level
 - `End Session`: closes the active room set and ends the run
 
@@ -182,7 +203,8 @@ Important rules:
 
 - clicking inside a room is how you shoot barriers
 - clicking anywhere in a room also recalls the room cluster
-- focusing the control deck pauses the game
+- while a run is live, the control deck is HUD-only
+- press `Escape` to pause and regain full control-deck access
 - closing any active room during a run aborts the session
 - selecting another level during a live run opens a confirmation dialog first
 
@@ -200,6 +222,7 @@ The current playable build includes:
 - best-time and medal tracking
 - persistent local progress
 - shared utility charges
+- signal credits and summary-based run upgrades
 - `Bridge Pulse` and `Time Brake`
 - host-side synthesized audio
 - focused-room xray rendering for overlap readability

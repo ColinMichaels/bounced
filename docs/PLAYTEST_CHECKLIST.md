@@ -2,6 +2,13 @@
 
 This checklist is for the browser and OS behaviors that are still risky even with smoke coverage.
 
+## Current Status
+
+As of March 14, 2026:
+
+- Chromium smoke coverage in `tests/smoke/session-flow.spec.ts` now covers hidden-objective masking, popup spawn and recall after control-deck focus, summary flow, summary action visibility, and close-a-room abort.
+- Remaining manual verification is focused on native browser and OS behavior that automation cannot prove reliably, especially title-bar dragging, popup sizing drift after repeated relayouts, and macOS vs Windows Chrome differences.
+
 ## Hidden Objective Rule
 
 Goal:
@@ -67,7 +74,7 @@ Checks:
 
 ## Cross-Platform Notes
 
-The main things to compare across macOS and Windows Chrome:
+These are the main remaining manual checks to compare across macOS and Windows Chrome:
 
 - popup sizing consistency after several level reshapes
 - whether native title-bar dragging updates front-most room state reliably

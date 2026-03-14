@@ -114,6 +114,8 @@ export interface CatchAttemptPayload {
 
 export type TransitionDirection = WindowEdge
 export type MedalTier = 'none' | 'bronze' | 'silver' | 'gold'
+export type RunUpgradeId = 'reserve_cells' | 'signal_lens' | 'pulse_coil'
+export type RunUpgradeLevels = Record<RunUpgradeId, number>
 
 export interface MedalThresholds {
   bronzeMs: number
@@ -151,7 +153,9 @@ export interface LevelSummaryState {
   bestTimeMs: number
   scoreDelta: number
   utilityChargeDelta: number
+  creditDelta: number
   totalScore: number
+  totalCredits: number
   totalStreak: number
   totalCompletedLevels: number
   relayCount: number
@@ -183,9 +187,11 @@ export interface GameSnapshot {
   bestLevelTimeMs: number | null
   bestLevelMedal: MedalTier
   utilityCharges: number
+  upgradeCredits: number
   selectedLevel: number
   maxUnlockedLevel: number
   completedLevels: number[]
+  runUpgradeLevels: RunUpgradeLevels
   difficulty: DifficultyLevel
   availableWindowCount: number
   requiredWindowCount: number

@@ -2,6 +2,7 @@ import '../styles/app.css'
 
 import { createGameChannelName, openGameChannel } from '../network/channel'
 import type { GameMessage } from '../shared/messages'
+import { RUN_UPGRADES, formatRunUpgradeEffect, formatRunUpgradeLevel, getRunUpgradeCost } from '../shared/upgrades'
 import type { GameSnapshot, MedalTier } from '../shared/types'
 
 const search = new URLSearchParams(window.location.search)
@@ -17,6 +18,7 @@ const clearTimeElement = must<HTMLElement>('summary-clear-time')
 const bestTimeElement = must<HTMLElement>('summary-best-time')
 const scoreDeltaElement = must<HTMLElement>('summary-score-delta')
 const pulseDeltaElement = must<HTMLElement>('summary-pulse-delta')
+const creditDeltaElement = must<HTMLElement>('summary-credit-delta')
 const goalWindowElement = must<HTMLElement>('summary-goal-window')
 const recordNoteElement = must<HTMLElement>('summary-record-note')
 const progressNoteElement = must<HTMLElement>('summary-progress-note')
@@ -26,6 +28,8 @@ const nextWindowsElement = must<HTMLElement>('summary-next-windows')
 const nextRelaysElement = must<HTMLElement>('summary-next-relays')
 const nextSpeedElement = must<HTMLElement>('summary-next-speed')
 const nextGoldElement = must<HTMLElement>('summary-next-gold')
+const labCreditsElement = must<HTMLElement>('summary-lab-credits')
+const upgradeListElement = must<HTMLElement>('summary-upgrade-list')
 const statusElement = must<HTMLElement>('summary-status')
 const nextButton = must<HTMLButtonElement>('summary-next-button')
 const replayButton = must<HTMLButtonElement>('summary-replay-button')
@@ -73,6 +77,29 @@ lobbyButton.addEventListener('click', () => {
   })
 })
 
+upgradeListElement.addEventListener('click', (event) => {
+  const target = event.target instanceof HTMLElement
+    ? event.target.closest<HTMLButtonElement>('button[data-upgrade]')
+    : null
+
+  if (!target || target.disabled) {
+    return
+  }
+
+  const upgrade = RUN_UPGRADES.find((entry) => entry.id === target.dataset.upgrade)
+  if (!upgrade) {
+    return
+  }
+
+  statusElement.textContent = `Reinvesting into ${upgrade.label}...`
+  channel.post({
+    type: 'purchase_upgrade',
+    payload: {
+      id: upgrade.id,
+    },
+  })
+})
+
 window.addEventListener('beforeunload', () => {
   channel.close()
 })
@@ -97,7 +124,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   const summary = snapshot.levelSummary
   if (snapshot.phase !== 'summary' || !summary) {
     statusElement.textContent = 'Summary closed. Returning to the control deck...'
-    setButtonsDisabled(true)
+    setActionButtonsDisabled(true)
     window.setTimeout(() => {
       try {
         window.close()
@@ -126,9 +153,12 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   bestTimeElement.textContent = formatDurationMs(summary.bestTimeMs)
   scoreDeltaElement.textContent = formatSigned(summary.scoreDelta)
   pulseDeltaElement.textContent = formatSigned(summary.utilityChargeDelta)
+  creditDeltaElement.textContent = formatSigned(summary.creditDelta)
   goalWindowElement.textContent = summary.goalWindowTitle ?? 'Goal room pending'
   recordNoteElement.textContent = getRecordNote(summary)
-  progressNoteElement.textContent = `${summary.totalCompletedLevels} / 100 cleared • score ${summary.totalScore} • streak ${summary.totalStreak}`
+  progressNoteElement.textContent = `${summary.totalCompletedLevels} / 100 cleared • score ${summary.totalScore} • credits ${summary.totalCredits} • streak ${summary.totalStreak}`
+  labCreditsElement.textContent = `${snapshot.upgradeCredits} signal credit${snapshot.upgradeCredits === 1 ? '' : 's'} banked for this run.`
+  upgradeListElement.innerHTML = renderUpgradeList(snapshot)
 
   if (summary.nextDifficulty) {
     previewTitleElement.textContent = `Level ${summary.nextDifficulty.level}`
@@ -149,7 +179,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   nextButton.disabled = isCampaignComplete
   nextButton.textContent = isCampaignComplete ? 'Campaign Clear' : `Start Level ${summary.nextLevel}`
   replayButton.textContent = `Replay Level ${summary.clearedLevel}`
-  setButtonsDisabled(false, isCampaignComplete)
+  setActionButtonsDisabled(false, isCampaignComplete)
   statusElement.textContent = isCampaignComplete
     ? 'Campaign complete. Choose a replay or return to the lobby.'
     : 'Choose the next move.'
@@ -157,13 +187,50 @@ function renderSnapshot(snapshot: GameSnapshot): void {
 
 function setBusyState(message: string): void {
   statusElement.textContent = message
-  setButtonsDisabled(true)
+  setActionButtonsDisabled(true)
+  setUpgradeButtonsDisabled(true)
 }
 
-function setButtonsDisabled(disabled: boolean, disableNextOnly = false): void {
+function setActionButtonsDisabled(disabled: boolean, disableNextOnly = false): void {
   nextButton.disabled = disabled || disableNextOnly
   replayButton.disabled = disabled
   lobbyButton.disabled = disabled
+}
+
+function setUpgradeButtonsDisabled(disabled: boolean): void {
+  upgradeListElement.querySelectorAll<HTMLButtonElement>('button[data-upgrade]').forEach((button) => {
+    button.disabled = disabled || button.disabled
+  })
+}
+
+function renderUpgradeList(snapshot: GameSnapshot): string {
+  return RUN_UPGRADES.map((upgrade) => {
+    const level = snapshot.runUpgradeLevels[upgrade.id]
+    const nextCost = getRunUpgradeCost(upgrade.id, level)
+    const canBuy = nextCost !== null && snapshot.upgradeCredits >= nextCost
+
+    return `
+      <article class="summary-upgrade">
+        <div class="summary-upgrade__head">
+          <div>
+            <p class="summary-upgrade__eyebrow">${formatRunUpgradeLevel(level, upgrade.maxLevel)}</p>
+            <h3 class="summary-upgrade__title">${upgrade.label}</h3>
+          </div>
+          <span class="summary-upgrade__cost">${nextCost === null ? 'MAX' : `${nextCost} CR`}</span>
+        </div>
+        <p class="summary-upgrade__body">${formatRunUpgradeEffect(upgrade.id, level)}</p>
+        <div class="summary-upgrade__footer">
+          <span>${nextCost === null ? 'Maxed for this run.' : `Next: ${formatRunUpgradeEffect(upgrade.id, level + 1)}`}</span>
+          <button
+            type="button"
+            data-upgrade="${upgrade.id}"
+            ${canBuy ? '' : 'disabled'}
+            aria-label="${nextCost === null ? `${upgrade.label} maxed` : `Buy ${upgrade.label} for ${nextCost} credits`}"
+          >${nextCost === null ? 'Maxed' : `Buy • ${nextCost}`}</button>
+        </div>
+      </article>
+    `
+  }).join('')
 }
 
 function getRecordNote(summary: NonNullable<GameSnapshot['levelSummary']>): string {

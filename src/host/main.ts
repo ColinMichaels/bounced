@@ -10,14 +10,13 @@ import {
 } from '../engine/difficulty'
 import { createGameChannelName, openGameChannel } from '../network/channel'
 import type { GameMessage } from '../shared/messages'
+import { RUN_UPGRADES, formatRunUpgradeEffect, formatRunUpgradeLevel, getRunUpgradeCost } from '../shared/upgrades'
 import type { GameSnapshot, MedalTier } from '../shared/types'
 import { HostAudioEngine } from './audio'
 import { ProgressStorage } from './progressStorage'
 import { WindowManager } from './windowManager'
 
 const startButton = must<HTMLButtonElement>('start-button')
-const utilityButton = must<HTMLButtonElement>('utility-button')
-const timeBrakeButton = must<HTMLButtonElement>('time-brake-button')
 const respawnButton = must<HTMLButtonElement>('respawn-button')
 const stopButton = must<HTMLButtonElement>('stop-button')
 const popupWarning = must<HTMLParagraphElement>('popup-warning')
@@ -33,15 +32,25 @@ const scoreValue = must<HTMLElement>('score-value')
 const streakValue = must<HTMLElement>('streak-value')
 const bestStreakValue = must<HTMLElement>('best-streak-value')
 const timerHudValue = must<HTMLElement>('timer-hud-value')
+const hudTargetTimeValue = must<HTMLElement>('hud-target-time-value')
+const hudUtilityChargeValue = must<HTMLElement>('hud-utility-charge-value')
+const hudUtilityStateValue = must<HTMLElement>('hud-utility-state-value')
+const hudBuffList = must<HTMLUListElement>('hud-buff-list')
+const hudRecallButton = must<HTMLButtonElement>('hud-recall-button')
+const hudUtilityButton = must<HTMLButtonElement>('hud-utility-button')
+const hudTimeBrakeButton = must<HTMLButtonElement>('hud-time-brake-button')
+const hudLobbyButton = must<HTMLButtonElement>('hud-lobby-button')
 const timerValue = must<HTMLElement>('timer-value')
 const bestTimeValue = must<HTMLElement>('best-time-value')
 const medalValue = must<HTMLElement>('medal-value')
 const targetTimeValue = must<HTMLElement>('target-time-value')
 const utilityChargeValue = must<HTMLElement>('utility-charge-value')
+const upgradeCreditValue = must<HTMLElement>('upgrade-credit-value')
 const utilityStateValue = must<HTMLElement>('utility-state-value')
 const levelValue = must<HTMLElement>('level-value')
 const windowCountValue = must<HTMLElement>('window-count-value')
 const windowList = must<HTMLUListElement>('window-list')
+const upgradeList = must<HTMLUListElement>('upgrade-list')
 const hostShell = document.body
 
 const sessionId = createSessionId()
@@ -69,8 +78,11 @@ interface BouncedTestHarness {
   forceLevelComplete: () => boolean
   attemptActiveTargetHit: () => boolean
   coverActiveTarget: () => boolean
+  resolveContainingWindowId: (x: number, y: number, preferredWindowId: string | null) => string | null
   closeWindow: (id: string) => boolean
   setFrontWindow: (id: string | null) => void
+  pauseForDeckFocus: () => void
+  simulateFocusReturn: () => void
 }
 
 declare global {
@@ -97,6 +109,7 @@ let popupAccessState = loadPopupAccessState()
 let pendingLevelSelection: number | null = null
 let summaryWindowRef: Window | null = null
 let lastSummaryKey = ''
+let hudFocusActive = false
 
 engine.restoreProgress(progressStorage.load())
 engine.subscribe(handleEngineSnapshot)
@@ -113,6 +126,20 @@ window.addEventListener('blur', () => {
 
 document.addEventListener('visibilitychange', () => {
   updateHostFocusState(document.visibilityState === 'visible' && document.hasFocus())
+})
+
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || event.defaultPrevented) {
+    return
+  }
+
+  if (!hasStarted || pausedForDeckFocus || latestSnapshot.phase === 'summary' || latestSnapshot.phase === 'idle') {
+    return
+  }
+
+  event.preventDefault()
+  pauseForControlDeck()
+  syncDeckPresentation()
 })
 
 levelSelect.addEventListener('click', (event) => {
@@ -206,20 +233,69 @@ respawnButton.addEventListener('click', () => {
   engine.respawnBall()
 })
 
-utilityButton.addEventListener('click', () => {
-  audio.unlock()
-  engine.activateBridgePulse(Date.now())
+hudRecallButton.addEventListener('click', () => {
+  if (pausedForDeckFocus) {
+    resumeGameplay()
+    return
+  }
+
+  returnHudFocusToGameplay()
 })
 
-timeBrakeButton.addEventListener('click', () => {
+hudUtilityButton.addEventListener('click', () => {
+  if (pausedForDeckFocus) {
+    resumeGameplay()
+  }
+  triggerBridgePulse()
+  returnHudFocusToGameplay()
+})
+
+hudTimeBrakeButton.addEventListener('click', () => {
+  if (pausedForDeckFocus) {
+    resumeGameplay()
+  }
+  triggerTimeBrake()
+  returnHudFocusToGameplay()
+})
+
+hudLobbyButton.addEventListener('click', () => {
   audio.unlock()
-  engine.activateTimeBrake(Date.now())
+  stopActiveSession('Returned to the control board lobby.')
 })
 
 stopButton.addEventListener('click', () => {
   audio.unlock()
   stopActiveSession()
 })
+
+function triggerBridgePulse(): void {
+  audio.unlock()
+  engine.activateBridgePulse(Date.now())
+}
+
+function triggerTimeBrake(): void {
+  audio.unlock()
+  engine.activateTimeBrake(Date.now())
+}
+
+function clearHudInteractionState(): void {
+  hudFocusActive = false
+}
+
+function returnHudFocusToGameplay(): void {
+  if (!hasStarted) {
+    return
+  }
+
+  clearHudInteractionState()
+  const snapshot = engine.getSnapshot()
+  const preferredId = snapshot.ball?.ownerWindowId ?? snapshot.activeWindowIds[0] ?? null
+  followWindows = true
+  lastFocusedOwnerId = null
+  lastFollowAt = 0
+  recallWindowCluster(preferredId)
+  syncDeckPresentation()
+}
 
 function armSession(level: number): boolean {
   const initialWindowCount = getDifficultyForLevel(level).activeWindows
@@ -243,6 +319,7 @@ function armSession(level: number): boolean {
   readinessWarning = ''
   hasStarted = true
   pausedForDeckFocus = false
+  clearHudInteractionState()
   followWindows = true
   lastFocusedOwnerId = null
   lastFollowAt = 0
@@ -355,6 +432,9 @@ function handleMessage(message: GameMessage): void {
     case 'summary_action':
       handleSummaryAction(message.payload.action)
       break
+    case 'purchase_upgrade':
+      engine.purchaseUpgrade(message.payload.id)
+      break
     case 'register_window':
     case 'snapshot':
       break
@@ -373,6 +453,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   if (snapshot.phase === 'summary' && snapshot.levelSummary) {
     hasStarted = false
     pausedForDeckFocus = false
+    clearHudInteractionState()
     desiredWindowCount = 0
     followWindows = true
     engine.setFrontWindowId(null)
@@ -410,27 +491,32 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   bestStreakValue.textContent = String(snapshot.bestStreak)
   const formattedTimer = formatDurationMs(snapshot.levelElapsedMs)
   timerHudValue.textContent = formattedTimer
+  hudTargetTimeValue.textContent = formatMedalTarget(snapshot.bestLevelMedal, snapshot.difficulty.medalThresholds)
+  hudUtilityChargeValue.textContent = String(snapshot.utilityCharges)
+  hudUtilityStateValue.textContent = formatUtilityState(snapshot)
+  hudBuffList.innerHTML = renderHudBuffs(snapshot)
   timerValue.textContent = formattedTimer
   bestTimeValue.textContent = snapshot.bestLevelTimeMs === null ? '--:--.-' : formatDurationMs(snapshot.bestLevelTimeMs)
   medalValue.textContent = formatMedalTier(snapshot.bestLevelMedal)
   medalValue.dataset.tier = snapshot.bestLevelMedal
   targetTimeValue.textContent = formatMedalTarget(snapshot.bestLevelMedal, snapshot.difficulty.medalThresholds)
   utilityChargeValue.textContent = String(snapshot.utilityCharges)
+  upgradeCreditValue.textContent = String(snapshot.upgradeCredits)
   utilityStateValue.textContent = formatUtilityState(snapshot)
   levelValue.textContent = `${snapshot.selectedLevel} / ${MAX_LEVEL}`
   windowCountValue.textContent = `${snapshot.availableWindowCount} / ${snapshot.requiredWindowCount}`
   startButton.textContent = hasStarted && windowManager.getOpenCount() > 0 ? 'Resume Game' : 'Start Game'
-  utilityButton.textContent = snapshot.activeUtility?.kind === 'bridge_pulse' ? 'Bridge Pulse Live' : 'Bridge Pulse'
-  timeBrakeButton.textContent = snapshot.activeUtility?.kind === 'time_brake' ? 'Time Brake Live' : 'Time Brake'
+  hudUtilityButton.textContent = snapshot.activeUtility?.kind === 'bridge_pulse' ? 'Pulse Live' : 'Pulse'
+  hudTimeBrakeButton.textContent = snapshot.activeUtility?.kind === 'time_brake' ? 'Brake Live' : 'Brake'
+  hudRecallButton.disabled = !hasStarted || windowManager.getOpenCount() === 0
+  hudLobbyButton.disabled = !hasStarted
   respawnButton.disabled = !hasStarted || snapshot.phase === 'paused'
-  utilityButton.disabled = !hasStarted
+  const utilitiesDisabled = !hasStarted
     || snapshot.phase !== 'running'
     || snapshot.utilityCharges <= 0
     || snapshot.activeUtility !== null
-  timeBrakeButton.disabled = !hasStarted
-    || snapshot.phase !== 'running'
-    || snapshot.utilityCharges <= 0
-    || snapshot.activeUtility !== null
+  hudUtilityButton.disabled = utilitiesDisabled
+  hudTimeBrakeButton.disabled = utilitiesDisabled
   stopButton.textContent = 'End Session'
 
   statusText.textContent = hasStarted
@@ -446,6 +532,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     `Bonuses live: ${snapshot.ambientBonuses.length + (snapshot.activeScoreNode ? 1 : 0)}.`,
     `Goal window: ${goalWindowTitle}.`,
     `Utility charges: ${snapshot.utilityCharges}.`,
+    `Signal credits: ${snapshot.upgradeCredits}.`,
     snapshot.activeUtility ? `Utility live: ${formatDurationMs(snapshot.activeUtility.remainingMs)} remaining.` : 'Utility ready when a charge is available.',
     `Unlocked levels: 1-${snapshot.maxUnlockedLevel}.`,
     `${snapshot.completedLevels.length} of ${MAX_LEVEL} levels cleared.`,
@@ -475,6 +562,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     .join('')
 
   windowList.innerHTML = items || '<li>Waiting for play windows.</li>'
+  upgradeList.innerHTML = renderUpgradeList(snapshot)
   const bestTimeSignature = Object.entries(progress.bestLevelTimesMs)
     .map(([level, timeMs]) => `${level}:${timeMs}`)
     .join(',')
@@ -557,7 +645,7 @@ function ensureSummaryWindow(snapshot: GameSnapshot): void {
   }
 
   const width = 520
-  const height = 720
+  const height = 800
   const left = Math.max(0, window.screenX + Math.round((window.outerWidth - width) / 2))
   const top = Math.max(0, window.screenY + Math.round((window.outerHeight - height) / 2))
   const url = new URL('./summary.html', window.location.href)
@@ -627,6 +715,7 @@ function stopActiveSession(prefix = 'Session ended.'): void {
   closeSummaryWindow()
   hasStarted = false
   pausedForDeckFocus = false
+  clearHudInteractionState()
   desiredWindowCount = 0
   readinessWarning = ''
   lastFocusedOwnerId = null
@@ -655,6 +744,8 @@ function renderWarnings(): void {
     warnings.push('Session paused while the control deck is focused. Press Resume Game or click a room to continue.')
   } else if (latestSnapshot.phase === 'summary') {
     warnings.push('Level report ready. Use the summary window to start the next level, replay, or return to the lobby.')
+  } else if (!readinessWarning && hasStarted && hostHasFocus) {
+    warnings.push('HUD only while gameplay is live. Use Rooms to recall the game windows, press Escape for full control-deck access, or use Lobby to exit.')
   } else if (!readinessWarning && hasStarted) {
     warnings.push('Use Resume Game or click any game window to recall the cluster. Closing any room ends the current session.')
   }
@@ -689,6 +780,7 @@ function resumeGameplay(preferredId?: string | null): void {
     return
   }
 
+  clearHudInteractionState()
   if (pausedForDeckFocus) {
     pausedForDeckFocus = false
     engine.resume(Date.now())
@@ -777,6 +869,7 @@ function abortSessionDueToClosedWindow(windowId: string): void {
 
   hasStarted = false
   pausedForDeckFocus = false
+  clearHudInteractionState()
   desiredWindowCount = 0
   followWindows = true
   readinessWarning = `${closedWindowTitle} was closed during play. Session aborted.`
@@ -795,6 +888,10 @@ function updateHostFocusState(nextHasFocus: boolean): void {
   const previousHasFocus = hostHasFocus
   hostHasFocus = nextHasFocus
 
+  if (!nextHasFocus) {
+    hudFocusActive = false
+  }
+
   if (
     nextHasFocus
     && !previousHasFocus
@@ -807,7 +904,9 @@ function updateHostFocusState(nextHasFocus: boolean): void {
   }
 
   if (hasStarted && nextHasFocus && !previousHasFocus) {
-    pauseForControlDeck()
+    if (!pausedForDeckFocus && latestSnapshot.phase !== 'idle' && latestSnapshot.phase !== 'summary') {
+      hudFocusActive = true
+    }
   }
 
   syncDeckPresentation()
@@ -818,6 +917,7 @@ function pauseForControlDeck(): void {
     return
   }
 
+  clearHudInteractionState()
   pausedForDeckFocus = true
   audio.pause()
   engine.pause(Date.now())
@@ -842,6 +942,8 @@ function installTestHarness(): void {
     forceLevelComplete: () => engine.debugForceLevelComplete(Date.now()),
     attemptActiveTargetHit: () => engine.debugAttemptActiveTargetHit(Date.now()),
     coverActiveTarget: () => coverActiveTargetForTest(),
+    resolveContainingWindowId: (x: number, y: number, preferredWindowId: string | null) =>
+      engine.debugResolveContainingWindowId(x, y, preferredWindowId),
     closeWindow: (id: string) => {
       const handle = windowManager.getHandle(id)
       if (!handle?.ref || handle.ref.closed) {
@@ -853,6 +955,14 @@ function installTestHarness(): void {
     },
     setFrontWindow: (id: string | null) => {
       engine.setFrontWindowId(id)
+    },
+    pauseForDeckFocus: () => {
+      pauseForControlDeck()
+      syncDeckPresentation()
+    },
+    simulateFocusReturn: () => {
+      updateHostFocusState(false)
+      updateHostFocusState(true)
     },
   }
 }
@@ -909,6 +1019,51 @@ function must<T extends HTMLElement>(id: string): T {
   }
 
   return element as T
+}
+
+function renderHudBuffs(snapshot: GameSnapshot): string {
+  const buffs: string[] = []
+  const reserveLevel = snapshot.runUpgradeLevels.reserve_cells
+  const lensLevel = snapshot.runUpgradeLevels.signal_lens
+  const coilLevel = snapshot.runUpgradeLevels.pulse_coil
+
+  if (reserveLevel > 0) {
+    buffs.push(`<li title="${formatRunUpgradeEffect('reserve_cells', reserveLevel)}">Reserve +${reserveLevel} ch</li>`)
+  }
+
+  if (lensLevel > 0) {
+    buffs.push(`<li title="${formatRunUpgradeEffect('signal_lens', lensLevel)}">Lens +${lensLevel * 4}px</li>`)
+  }
+
+  if (coilLevel > 0) {
+    buffs.push(`<li title="${formatRunUpgradeEffect('pulse_coil', coilLevel)}">Coil +${coilLevel * 25}%</li>`)
+  }
+
+  return buffs.join('') || '<li class="is-empty">Base kit</li>'
+}
+
+function renderUpgradeList(snapshot: GameSnapshot): string {
+  const items = RUN_UPGRADES.map((upgrade) => {
+    const level = snapshot.runUpgradeLevels[upgrade.id]
+    const nextCost = getRunUpgradeCost(upgrade.id, level)
+    const nextEffect = nextCost === null
+      ? 'Maxed for this run.'
+      : `Next: ${formatRunUpgradeEffect(upgrade.id, level + 1)} Cost ${nextCost}.`
+
+    return `
+      <li>
+        <div class="upgrade-list__head">
+          <strong>${upgrade.label}</strong>
+          <span>${formatRunUpgradeLevel(level, upgrade.maxLevel)}</span>
+        </div>
+        <p>${upgrade.description}</p>
+        <p>${formatRunUpgradeEffect(upgrade.id, level)}</p>
+        <p>${nextEffect}</p>
+      </li>
+    `
+  }).join('')
+
+  return items || '<li>Signal lab offline.</li>'
 }
 
 function renderLevelButtons(snapshot: GameSnapshot, progress: ReturnType<GameEngine['getProgressState']>): string {
@@ -1059,7 +1214,11 @@ function syncDeckPresentation(): void {
   const summaryActive = latestSnapshot.phase === 'summary' && !!summaryWindowRef && !summaryWindowRef.closed
   hostShell.dataset.sessionState = hasStarted || summaryActive ? 'armed' : 'idle'
   hostShell.dataset.deckFocus = hasStarted
-    ? (!hostHasFocus && !pausedForDeckFocus ? 'background' : 'foreground')
+    ? (
+      hudFocusActive
+        ? 'hud'
+        : (!hostHasFocus && !pausedForDeckFocus ? 'background' : 'foreground')
+    )
     : summaryActive
       ? 'background'
       : 'foreground'

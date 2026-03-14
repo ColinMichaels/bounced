@@ -34,8 +34,13 @@ From the control deck:
 
 If the room windows get buried behind other windows:
 
-- click `Resume Game` on the control deck
+- use the HUD `Rooms` button at the top of the control deck
 - or click inside any room to recall the group
+
+If you want the full control deck back during a live run:
+
+- press `Escape` to pause
+- or use the HUD `Lobby` button to exit the run immediately
 
 If you close one of the active room windows during a run, the session ends immediately.
 
@@ -145,11 +150,11 @@ Ambient bonuses do not replace relay progression. They are optional pickups alon
 
 ## Utilities
 
-Utility charges are shared across the helper abilities on the control deck.
+Utility charges are shared across the helper abilities in the in-game HUD.
 
 ### Bridge Pulse
 
-When you have at least one charge, you can activate it from the control deck.
+When you have at least one charge, you can activate it from the HUD.
 
 While it is active:
 
@@ -214,11 +219,13 @@ Important:
 
 ## Pause And Resume
 
-If you click back onto the control deck during a live run:
+If you press `Escape` during a live run:
 
 - the game pauses
 - the timer pauses
 - active audio pauses
+
+While the run is live, the control deck itself stays in HUD-only mode.
 
 Click `Resume Game` or click back into a room to continue.
 
