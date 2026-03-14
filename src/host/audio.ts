@@ -107,15 +107,7 @@ export class HostAudioEngine {
   }
 
   private handleBonusCollect(previousSnapshot: GameSnapshot, nextSnapshot: GameSnapshot): void {
-    const previousScoreNode = previousSnapshot.activeScoreNode
-    if (!previousScoreNode) {
-      return
-    }
-
-    const nextScoreNode = nextSnapshot.activeScoreNode
-    const collected = nextSnapshot.score > previousSnapshot.score
-      && (!nextScoreNode || nextScoreNode.windowId !== previousScoreNode.windowId)
-    if (!collected) {
+    if (nextSnapshot.bonusCollectionCount <= previousSnapshot.bonusCollectionCount) {
       return
     }
 

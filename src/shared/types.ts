@@ -83,6 +83,17 @@ export interface ScoreNodeState extends GoalState {
   value: number
 }
 
+export type AmbientBonusKind = 'score' | 'charge' | 'time'
+
+export interface AmbientBonusState extends GoalState {
+  id: string
+  kind: AmbientBonusKind
+  label: string
+  scoreValue: number
+  chargeValue: number
+  timeValueMs: number
+}
+
 export interface ActiveUtilityState {
   kind: 'bridge_pulse'
   label: string
@@ -163,6 +174,8 @@ export interface GameSnapshot {
   routeWindows: RouteWindowState[]
   activeTarget: TargetState | null
   activeScoreNode: ScoreNodeState | null
+  ambientBonuses: AmbientBonusState[]
+  bonusCollectionCount: number
   activeUtility: ActiveUtilityState | null
   obstacles: ObstacleState[]
   windows: WindowState[]

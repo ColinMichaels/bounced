@@ -613,6 +613,46 @@ button.utility {
   color: var(--muted);
 }
 
+.confirm-dialog {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 18%),
+    var(--panel-strong);
+  border: 1px solid var(--line-strong);
+  border-radius: 1rem;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 28px 72px rgba(0, 0, 0, 0.42);
+  color: var(--text);
+  max-width: 28rem;
+  padding: 1.15rem;
+  width: calc(100% - 2rem);
+}
+
+.confirm-dialog::backdrop {
+  background: rgba(3, 7, 12, 0.68);
+  backdrop-filter: blur(10px);
+}
+
+.confirm-dialog h2 {
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  margin: 0 0 0.65rem;
+  text-transform: uppercase;
+}
+
+.confirm-dialog p {
+  color: #b3c5d8;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.confirm-dialog__actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
 .host-shell[data-session-state="armed"][data-deck-focus="background"]::after {
   background:
     radial-gradient(circle at 50% 16%, rgba(147, 247, 255, 0.05), transparent 36%),
@@ -660,9 +700,10 @@ button.utility {
 }
 
 .client-app {
-  height: calc(100vh - 0.3rem);
+  height: 100vh;
   overflow: hidden;
   position: relative;
+  width: 100vw;
 }
 
 .client-header {

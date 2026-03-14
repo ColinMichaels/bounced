@@ -1,5 +1,12 @@
 import { pointInRect, rectFromWindow } from '../shared/geometry'
-import type { BallState, GameSnapshot, ObstacleState, RouteWindowState, WindowBoundsPayload } from '../shared/types'
+import type {
+  AmbientBonusKind,
+  BallState,
+  GameSnapshot,
+  ObstacleState,
+  RouteWindowState,
+  WindowBoundsPayload,
+} from '../shared/types'
 
 interface TrailPoint {
   x: number
@@ -83,7 +90,7 @@ export class BallRenderer {
 
     if (snapshot.balls.length === 0) {
       this.drawTarget(snapshot, bounds)
-      this.drawScoreNode(snapshot, bounds)
+      this.drawBonusNodes(snapshot, bounds)
       this.decayEffects()
       this.syncPreviousBalls(snapshot.balls)
       return
@@ -91,7 +98,7 @@ export class BallRenderer {
 
     const windowRect = rectFromWindow(bounds)
     this.drawTarget(snapshot, bounds)
-    this.drawScoreNode(snapshot, bounds)
+    this.drawBonusNodes(snapshot, bounds)
     const visibleBalls = snapshot.balls.filter((ball) => pointInRect(ball.x, ball.y, windowRect))
     if (visibleBalls.length === 0) {
       this.decayEffects()
@@ -125,7 +132,7 @@ export class BallRenderer {
       }
     }
 
-    return !!snapshot && !!bounds && snapshot.activeScoreNode?.windowId === bounds.id
+    return !!snapshot && !!bounds && this.getBonusNodesForWindow(snapshot, bounds.id).length > 0
   }
 
   private resize(): void {
@@ -401,7 +408,7 @@ export class BallRenderer {
     }
 
     this.handleObstacleTransition(previousSnapshot, nextSnapshot, bounds)
-    this.handleScoreNodeTransition(previousSnapshot, nextSnapshot, bounds)
+    this.handleBonusNodeTransition(previousSnapshot, nextSnapshot, bounds)
 
     if (previousSnapshot.phase !== 'running' || nextSnapshot.phase === 'idle') {
       return
@@ -484,29 +491,33 @@ export class BallRenderer {
     this.impactFlashes.length = Math.min(this.impactFlashes.length, IMPACT_MAX_FLASHES)
   }
 
-  private handleScoreNodeTransition(
+  private handleBonusNodeTransition(
     previousSnapshot: GameSnapshot,
     nextSnapshot: GameSnapshot,
     bounds: WindowBoundsPayload,
   ): void {
-    const previousScoreNode = previousSnapshot.activeScoreNode
-    if (!previousScoreNode || previousScoreNode.windowId !== bounds.id) {
+    if (nextSnapshot.bonusCollectionCount <= previousSnapshot.bonusCollectionCount) {
       return
     }
 
-    const nextScoreNode = nextSnapshot.activeScoreNode
-    const collectedHere = nextSnapshot.score > previousSnapshot.score
-      && (!nextScoreNode || nextScoreNode.windowId !== bounds.id)
-
-    if (!collectedHere) {
+    const previousBonusNodes = this.getBonusNodesForWindow(previousSnapshot, bounds.id)
+    if (previousBonusNodes.length === 0) {
       return
     }
 
-    this.spawnScoreFlash(
-      previousScoreNode.x - bounds.contentX,
-      previousScoreNode.y - bounds.contentY,
-      previousScoreNode.radius,
-    )
+    const nextBonusKeys = new Set(this.getBonusNodesForWindow(nextSnapshot, bounds.id).map((bonusNode) => bonusNode.key))
+
+    for (const bonusNode of previousBonusNodes) {
+      if (nextBonusKeys.has(bonusNode.key)) {
+        continue
+      }
+
+      this.spawnScoreFlash(
+        bonusNode.x - bounds.contentX,
+        bonusNode.y - bounds.contentY,
+        bonusNode.radius,
+      )
+    }
   }
 
   private drawImpactFlashes(): void {
@@ -626,23 +637,34 @@ export class BallRenderer {
     this.context.restore()
   }
 
-  private drawScoreNode(snapshot: GameSnapshot, bounds: WindowBoundsPayload): void {
-    if (!snapshot.activeScoreNode || snapshot.activeScoreNode.windowId !== bounds.id) {
+  private drawBonusNodes(snapshot: GameSnapshot, bounds: WindowBoundsPayload): void {
+    const bonusNodes = this.getBonusNodesForWindow(snapshot, bounds.id)
+    if (bonusNodes.length === 0) {
       return
     }
 
-    const x = snapshot.activeScoreNode.x - bounds.contentX
-    const y = snapshot.activeScoreNode.y - bounds.contentY
-    const radius = snapshot.activeScoreNode.radius
+    for (const bonusNode of bonusNodes) {
+      this.drawBonusNode(
+        bonusNode.x - bounds.contentX,
+        bonusNode.y - bounds.contentY,
+        bonusNode.radius,
+        bonusNode.label,
+        bonusNode.kind,
+      )
+    }
+  }
+
+  private drawBonusNode(x: number, y: number, radius: number, label: string, kind: 'relay' | AmbientBonusKind): void {
     const pulse = 0.72 + (((Math.sin(Date.now() / 240) + 1) * 0.5) * 0.28)
+    const palette = this.getBonusPalette(kind)
 
     this.context.save()
     this.context.translate(x, y)
 
     this.context.beginPath()
-    this.context.fillStyle = `rgba(118, 255, 176, ${0.12 * pulse})`
+    this.context.fillStyle = `rgba(${palette.glow}, ${0.12 * pulse})`
     this.context.shadowBlur = 18
-    this.context.shadowColor = 'rgba(118, 255, 176, 0.32)'
+    this.context.shadowColor = `rgba(${palette.glow}, 0.32)`
     this.context.arc(0, 0, radius + 10, 0, Math.PI * 2)
     this.context.fill()
 
@@ -653,8 +675,8 @@ export class BallRenderer {
     this.context.lineTo(0, radius + 6)
     this.context.lineTo(-radius - 6, 0)
     this.context.closePath()
-    this.context.fillStyle = 'rgba(118, 255, 176, 0.16)'
-    this.context.strokeStyle = 'rgba(168, 255, 206, 0.92)'
+    this.context.fillStyle = `rgba(${palette.fill}, 0.18)`
+    this.context.strokeStyle = `rgba(${palette.stroke}, 0.94)`
     this.context.lineWidth = 2
     this.context.fill()
     this.context.stroke()
@@ -665,15 +687,97 @@ export class BallRenderer {
     this.context.lineTo(0, radius - 2)
     this.context.lineTo(-radius + 2, 0)
     this.context.closePath()
-    this.context.fillStyle = 'rgba(12, 30, 22, 0.88)'
+    this.context.fillStyle = `rgba(${palette.core}, 0.9)`
     this.context.fill()
 
-    this.context.fillStyle = 'rgba(220, 255, 233, 0.96)'
+    this.context.fillStyle = `rgba(${palette.text}, 0.96)`
     this.context.font = '700 11px "SF Mono", "IBM Plex Mono", monospace'
     this.context.textAlign = 'center'
-    this.context.fillText(snapshot.activeScoreNode.label, 0, 4)
+    this.context.fillText(label, 0, 4)
 
     this.context.restore()
+  }
+
+  private getBonusNodesForWindow(snapshot: GameSnapshot, windowId: string): Array<{
+    key: string
+    kind: 'relay' | AmbientBonusKind
+    label: string
+    x: number
+    y: number
+    radius: number
+  }> {
+    const bonusNodes: Array<{
+      key: string
+      kind: 'relay' | AmbientBonusKind
+      label: string
+      x: number
+      y: number
+      radius: number
+    }> = []
+
+    if (snapshot.activeScoreNode && snapshot.activeScoreNode.windowId === windowId) {
+      bonusNodes.push({
+        key: `relay:${snapshot.activeScoreNode.windowId}`,
+        kind: 'relay',
+        label: snapshot.activeScoreNode.label,
+        x: snapshot.activeScoreNode.x,
+        y: snapshot.activeScoreNode.y,
+        radius: snapshot.activeScoreNode.radius,
+      })
+    }
+
+    for (const ambientBonus of snapshot.ambientBonuses) {
+      if (ambientBonus.windowId !== windowId) {
+        continue
+      }
+
+      bonusNodes.push({
+        key: ambientBonus.id,
+        kind: ambientBonus.kind,
+        label: ambientBonus.label,
+        x: ambientBonus.x,
+        y: ambientBonus.y,
+        radius: ambientBonus.radius,
+      })
+    }
+
+    return bonusNodes
+  }
+
+  private getBonusPalette(kind: 'relay' | AmbientBonusKind): {
+    glow: string
+    fill: string
+    stroke: string
+    core: string
+    text: string
+  } {
+    if (kind === 'relay' || kind === 'score') {
+      return {
+        glow: '118, 255, 176',
+        fill: '118, 255, 176',
+        stroke: '168, 255, 206',
+        core: '12, 30, 22',
+        text: '220, 255, 233',
+      }
+    }
+
+    if (kind === 'charge') {
+      return {
+        glow: '112, 223, 255',
+        fill: '112, 223, 255',
+        stroke: '199, 244, 255',
+        core: '10, 22, 34',
+        text: '230, 248, 255',
+      }
+    }
+
+    return {
+      glow: '255, 210, 112',
+      fill: '255, 210, 112',
+      stroke: '255, 234, 183',
+      core: '30, 22, 10',
+      text: '255, 247, 219',
+    }
   }
 
   private getRouteTint(routeWindow: RouteWindowState | null): string | null {

@@ -113,16 +113,13 @@ export class RoomAudioEngine {
     nextSnapshot: GameSnapshot,
     bounds: WindowBoundsPayload,
   ): void {
-    const previousScoreNode = previousSnapshot.activeScoreNode
-    if (!previousScoreNode || previousScoreNode.windowId !== bounds.id) {
+    const hadBonusInRoom = previousSnapshot.activeScoreNode?.windowId === bounds.id
+      || previousSnapshot.ambientBonuses.some((bonus) => bonus.windowId === bounds.id)
+    if (!hadBonusInRoom) {
       return
     }
 
-    const nextScoreNode = nextSnapshot.activeScoreNode
-    const collectedHere = nextSnapshot.score > previousSnapshot.score
-      && (!nextScoreNode || nextScoreNode.windowId !== bounds.id)
-
-    if (!collectedHere) {
+    if (nextSnapshot.bonusCollectionCount <= previousSnapshot.bonusCollectionCount) {
       return
     }
 

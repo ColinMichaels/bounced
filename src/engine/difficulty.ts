@@ -1,5 +1,5 @@
 import { WINDOW_POOL_GAP } from '../shared/constants'
-import type { DifficultyLevel, MedalThresholds, MedalTier } from '../shared/types'
+import type { AmbientBonusKind, DifficultyLevel, MedalThresholds, MedalTier } from '../shared/types'
 
 export interface LevelObstacleProfile {
   relayCount: number
@@ -15,6 +15,13 @@ export interface LevelLayoutProfile {
 export interface LevelSideBlockProfile {
   blockedRoomCount: number
   maxEdgesPerRoom: number
+}
+
+export interface LevelBonusProfile {
+  ambientCount: number
+  kinds: AmbientBonusKind[]
+  scoreValue: number
+  timeValueMs: number
 }
 
 const MIN_ACTIVE_WINDOWS = 3
@@ -116,6 +123,33 @@ export function getSideBlockProfileForLevel(level: number): LevelSideBlockProfil
       candidateRooms,
     ),
     maxEdgesPerRoom: level >= 28 ? 2 : 1,
+  }
+}
+
+export function getBonusProfileForLevel(level: number): LevelBonusProfile {
+  const difficulty = getDifficultyForLevel(level)
+  const candidateRooms = Math.max(0, difficulty.activeWindows - 1)
+  const ambientCount = level < 4
+    ? 0
+    : clampInt(
+      1 + Math.floor((level - 4) / 14) + Math.floor((difficulty.activeWindows - MIN_ACTIVE_WINDOWS) / 2),
+      1,
+      Math.max(1, Math.min(4, candidateRooms)),
+    )
+
+  const kinds: AmbientBonusKind[] = ['score']
+  if (level >= 10) {
+    kinds.push('charge')
+  }
+  if (level >= 18) {
+    kinds.push('time')
+  }
+
+  return {
+    ambientCount: candidateRooms === 0 ? 0 : Math.min(ambientCount, candidateRooms),
+    kinds,
+    scoreValue: level >= 30 ? 2 : 1,
+    timeValueMs: clampInt(1_100 + ((difficulty.activeWindows - MIN_ACTIVE_WINDOWS) * 220) + ((level - 1) * 18), 1_100, 2_800),
   }
 }
 

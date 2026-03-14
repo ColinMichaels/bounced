@@ -42,6 +42,7 @@ const canvas = must<HTMLCanvasElement>('game-canvas')
 const canvasFrame = must<HTMLElement>('canvas-frame')
 const DRAW_FRAME_INTERVAL_MS = 1000 / 30
 const WINDOW_SIZE_SYNC_MAX_ATTEMPTS = 6
+const VIEWPORT_SETTLE_TOLERANCE_PX = 14
 
 titleElement.textContent = roomLabel
 document.title = title
@@ -201,6 +202,7 @@ function syncCanvasLock(snapshot: GameSnapshot): void {
 
       applyLockedRoomSize(roomSize)
       syncOuterWindowSize(roomSize, () => {
+        applyLockedRoomSize(getSettledRoomSize(roomSize))
         lockedLayoutKey = nextLayoutKey
         pendingLayoutKey = null
         reportBounds()
@@ -319,6 +321,37 @@ function applyLockedRoomSize(roomSize: LockedRoomSize): void {
   canvas.style.height = `${roomSize.canvasHeight}px`
 }
 
+function getSettledRoomSize(roomSize: LockedRoomSize): LockedRoomSize {
+  const shellStyles = window.getComputedStyle(document.body)
+  const shellPaddingX = Math.ceil(
+    parseFloat(shellStyles.paddingLeft || '0')
+    + parseFloat(shellStyles.paddingRight || '0'),
+  )
+  const shellPaddingY = Math.ceil(
+    parseFloat(shellStyles.paddingTop || '0')
+    + parseFloat(shellStyles.paddingBottom || '0'),
+  )
+  const viewportWidth = Math.round(window.innerWidth)
+  const viewportHeight = Math.round(window.innerHeight)
+  const shellWidth = Math.abs(viewportWidth - roomSize.shellWidth) <= VIEWPORT_SETTLE_TOLERANCE_PX
+    ? viewportWidth
+    : roomSize.shellWidth
+  const shellHeight = Math.abs(viewportHeight - roomSize.shellHeight) <= VIEWPORT_SETTLE_TOLERANCE_PX
+    ? viewportHeight
+    : roomSize.shellHeight
+  const appWidth = Math.max(120, shellWidth - shellPaddingX)
+  const appHeight = Math.max(96, shellHeight - shellPaddingY)
+
+  return {
+    shellWidth,
+    shellHeight,
+    appWidth,
+    appHeight,
+    canvasWidth: appWidth,
+    canvasHeight: appHeight,
+  }
+}
+
 function syncOuterWindowSize(
   roomSize: LockedRoomSize,
   onSettled: () => void,
@@ -432,7 +465,8 @@ function getStatusText(snapshot: GameSnapshot, bounds: WindowBoundsPayload | nul
   }
 
   const liveObstacleCount = snapshot.obstacles.filter((obstacle) => obstacle.windowId === bounds.id && !obstacle.destroyed).length
-  const hasActiveScoreNode = snapshot.activeScoreNode?.windowId === bounds.id
+  const roomBonusCount = snapshot.ambientBonuses.filter((bonus) => bonus.windowId === bounds.id).length
+    + (snapshot.activeScoreNode?.windowId === bounds.id ? 1 : 0)
   const sideLockCount = routeWindow.blockedEdges.length
   const utilitySuffix = snapshot.activeUtility ? ' · PULSE' : ''
   const barrierSuffix = liveObstacleCount > 0
@@ -441,7 +475,11 @@ function getStatusText(snapshot: GameSnapshot, bounds: WindowBoundsPayload | nul
   const sideLockSuffix = sideLockCount > 0
     ? ` · ${sideLockCount} SIDE LOCK${sideLockCount === 1 ? '' : 'S'}${routeWindow.blockedEdgesSuppressed ? ' OPEN' : ''}`
     : ''
-  const scoreSuffix = hasActiveScoreNode ? ' · BONUS LIVE' : ''
+  const scoreSuffix = roomBonusCount <= 0
+    ? ''
+    : roomBonusCount === 1
+      ? ' · BONUS LIVE'
+      : ` · BONUS x${roomBonusCount}`
 
   if (routeWindow.role === 'start') {
     return snapshot.activeTarget?.kind === 'bridge'
