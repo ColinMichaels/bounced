@@ -1,7 +1,15 @@
 import { MAX_DELTA_MS, SHOT_COOLDOWN_MS, SHOT_HIT_PADDING_PX, WINDOW_STALE_MS } from '../shared/constants'
 import { clamp, findContainingWindow, getConnectedWindows, pointInCircle, rectFromWindow, sortWindowsBySlot } from '../shared/geometry'
 import type { GameChannel } from '../network/channel'
-import { getDifficultyForLevel, MAX_LEVEL } from './difficulty'
+import {
+  compareMedalTiers,
+  getDifficultyForLevel,
+  getMedalScoreBonus,
+  getMedalTierForTime,
+  getObstacleProfileForLevel,
+  getSideBlockProfileForLevel,
+  MAX_LEVEL,
+} from './difficulty'
 import { advanceBall, createBall, retuneBall, stabilizeBall } from './physics'
 import type {
   BallState,
@@ -9,11 +17,13 @@ import type {
   DifficultyLevel,
   GamePhase,
   GameSnapshot,
+  MedalTier,
   ObstacleState,
   PlayerProgressState,
   RouteWindowState,
   ScoreNodeState,
   TargetState,
+  WindowEdge,
   WindowBoundsPayload,
   WindowState,
 } from '../shared/types'
@@ -43,8 +53,31 @@ const OBSTACLE_TEMPLATES: ObstacleAnchor[] = [
   { id: 'pillar-center', kind: 'barrier', u: 0.5, v: 0.5, width: 0.22, height: 0.22, hitPoints: 1 },
   { id: 'pillar-upper', kind: 'barrier', u: 0.5, v: 0.28, width: 0.2, height: 0.2, hitPoints: 1 },
   { id: 'pillar-lower', kind: 'barrier', u: 0.5, v: 0.72, width: 0.2, height: 0.2, hitPoints: 1 },
+  { id: 'corner-top-left', kind: 'barrier', u: 0.22, v: 0.22, width: 0.16, height: 0.16, hitPoints: 1 },
+  { id: 'corner-top-right', kind: 'barrier', u: 0.78, v: 0.22, width: 0.16, height: 0.16, hitPoints: 1 },
+  { id: 'corner-bottom-left', kind: 'barrier', u: 0.22, v: 0.78, width: 0.16, height: 0.16, hitPoints: 1 },
+  { id: 'corner-bottom-right', kind: 'barrier', u: 0.78, v: 0.78, width: 0.16, height: 0.16, hitPoints: 1 },
+  { id: 'lane-left', kind: 'barrier', u: 0.2, v: 0.5, width: 0.12, height: 0.28, hitPoints: 1 },
+  { id: 'lane-right', kind: 'barrier', u: 0.8, v: 0.5, width: 0.12, height: 0.28, hitPoints: 1 },
 ]
 const SCORE_NODE_VALUE = 1
+const SCORE_NODE_CHARGE_VALUE = 1
+const BRIDGE_PULSE_DURATION_MS = 6_000
+const EMPTY_BLOCKED_EDGES = new Map<string, WindowEdge[]>()
+const SIDE_BLOCK_PATTERNS: WindowEdge[][] = [
+  ['left'],
+  ['right'],
+  ['up'],
+  ['down'],
+  ['left', 'up'],
+  ['right', 'up'],
+  ['left', 'down'],
+  ['right', 'down'],
+  ['left', 'right'],
+  ['up', 'down'],
+]
+
+type PauseReason = 'focus' | 'campaign_complete'
 
 export class GameEngine {
   private readonly windows = new Map<string, WindowState>()
@@ -56,6 +89,7 @@ export class GameEngine {
   private scoreNodeAnchors = new Map<string, GoalAnchor>()
   private obstacleAnchors = new Map<string, ObstacleAnchor[]>()
   private obstacleHitPoints = new Map<string, number>()
+  private blockedEdges = new Map<string, WindowEdge[]>()
   private claimedScoreNodeWindowIds = new Set<string>()
   private expiredScoreNodeWindowIds = new Set<string>()
   private enteredScoreNodeWindowIds = new Set<string>()
@@ -63,11 +97,21 @@ export class GameEngine {
   private score = 0
   private streak = 0
   private bestStreak = 0
+  private utilityCharges = 0
+  private bridgePulseEndsAt = 0
+  private pausedBridgePulseRemainingMs = 0
+  private currentLevelStartedAt: number | null = null
+  private currentLevelElapsedMs = 0
+  private bestLevelTimesMs = new Map<number, number>()
+  private bestLevelMedals = new Map<number, MedalTier>()
   private tick = 0
   private currentLevel = 1
   private maxUnlockedLevel = 1
   private readonly completedLevels = new Set<number>()
   private phase: GamePhase = 'idle'
+  private pauseReason: PauseReason | null = null
+  private pausedPhase: Exclude<GamePhase, 'idle' | 'paused'> | null = null
+  private pausedNote: string | null = null
   private note = 'Idle. Arm the field to begin at level 1.'
   private lastStepAt = 0
   private lastShotAt = 0
@@ -89,6 +133,8 @@ export class GameEngine {
     this.maxUnlockedLevel = maxUnlockedLevel
     this.currentLevel = clamp(state.selectedLevel, 1, maxUnlockedLevel)
     this.completedLevels.clear()
+    this.bestLevelTimesMs.clear()
+    this.bestLevelMedals.clear()
 
     for (const level of state.completedLevels) {
       if (level >= 1 && level <= MAX_LEVEL) {
@@ -96,23 +142,70 @@ export class GameEngine {
       }
     }
 
+    for (const [level, timeMs] of Object.entries(state.bestLevelTimesMs)) {
+      const numericLevel = Number(level)
+      if (Number.isInteger(numericLevel) && numericLevel >= 1 && numericLevel <= MAX_LEVEL && timeMs > 0) {
+        this.bestLevelTimesMs.set(numericLevel, timeMs)
+
+        if (!this.bestLevelMedals.has(numericLevel)) {
+          const derivedMedal = getMedalTierForTime(getDifficultyForLevel(numericLevel).medalThresholds, timeMs)
+          if (derivedMedal !== 'none') {
+            this.bestLevelMedals.set(numericLevel, derivedMedal)
+          }
+        }
+      }
+    }
+
+    for (const [level, medal] of Object.entries(state.bestLevelMedals)) {
+      const numericLevel = Number(level)
+      if (
+        Number.isInteger(numericLevel)
+        && numericLevel >= 1
+        && numericLevel <= MAX_LEVEL
+        && isMedalTier(medal)
+        && medal !== 'none'
+      ) {
+        const existing = this.bestLevelMedals.get(numericLevel) ?? 'none'
+        if (compareMedalTiers(medal, existing) > 0) {
+          this.bestLevelMedals.set(numericLevel, medal)
+        }
+      }
+    }
+
     this.score = Math.max(this.score, this.completedLevels.size)
 
     this.phase = 'idle'
+    this.pauseReason = null
+    this.pausedPhase = null
+    this.pausedNote = null
     this.tick = 0
     this.balls = []
+    this.utilityCharges = 0
+    this.bridgePulseEndsAt = 0
+    this.pausedBridgePulseRemainingMs = 0
+    this.resetLevelTimer()
     this.resetRouteState()
     this.note = this.getIdleNote()
   }
 
   getProgressState(): PlayerProgressState {
     return {
-      version: 1,
+      version: 3,
       score: this.score,
       bestStreak: this.bestStreak,
       selectedLevel: this.currentLevel,
       maxUnlockedLevel: this.maxUnlockedLevel,
       completedLevels: [...this.completedLevels].sort((left, right) => left - right),
+      bestLevelTimesMs: Object.fromEntries(
+        [...this.bestLevelTimesMs.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([level, timeMs]) => [String(level), timeMs]),
+      ),
+      bestLevelMedals: Object.fromEntries(
+        [...this.bestLevelMedals.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([level, medal]) => [String(level), medal]),
+      ),
     }
   }
 
@@ -136,7 +229,7 @@ export class GameEngine {
     const startWindowId = routeWindowIds[0] ?? null
     const bridgeWindowIds = routeWindowIds.slice(1, -1)
     const completedBridgeWindowIds = bridgeWindowIds.slice(0, Math.min(this.currentRouteStep, bridgeWindowIds.length))
-    const campaignComplete = this.phase === 'paused' && this.completedLevels.size >= MAX_LEVEL
+    const campaignComplete = this.phase === 'paused' && this.pauseReason === 'campaign_complete'
 
     return {
       tick: this.tick,
@@ -145,6 +238,10 @@ export class GameEngine {
       score: this.score,
       streak: this.streak,
       bestStreak: this.bestStreak,
+      levelElapsedMs: this.currentLevelElapsedMs,
+      bestLevelTimeMs: this.bestLevelTimesMs.get(this.currentLevel) ?? null,
+      bestLevelMedal: this.bestLevelMedals.get(this.currentLevel) ?? 'none',
+      utilityCharges: this.utilityCharges,
       selectedLevel: this.currentLevel,
       maxUnlockedLevel: this.maxUnlockedLevel,
       completedLevels: [...this.completedLevels].sort((left, right) => left - right),
@@ -159,6 +256,7 @@ export class GameEngine {
       routeWindows: this.getRouteWindowStates(activeWindows),
       activeTarget,
       activeScoreNode: this.getActiveScoreNodeState(activeWindows, difficulty, obstacles, activeTarget),
+      activeUtility: this.getActiveUtilityState(),
       obstacles,
       windows: registeredWindows,
       balls: this.balls,
@@ -171,6 +269,13 @@ export class GameEngine {
   start(now: number): void {
     this.tick = 0
     this.balls = []
+    this.utilityCharges = 0
+    this.bridgePulseEndsAt = 0
+    this.pausedBridgePulseRemainingMs = 0
+    this.pauseReason = null
+    this.pausedPhase = null
+    this.pausedNote = null
+    this.resetLevelTimer()
     this.resetRouteState()
     this.phase = 'waiting'
     this.note = `Level ${this.currentLevel} armed. Connect the windows and route the signal through every relay to the goal.`
@@ -180,8 +285,15 @@ export class GameEngine {
 
   endGame(prefix = 'Session ended.'): void {
     this.balls = []
+    this.utilityCharges = 0
+    this.bridgePulseEndsAt = 0
+    this.pausedBridgePulseRemainingMs = 0
+    this.resetLevelTimer()
     this.resetRouteState()
     this.phase = 'idle'
+    this.pauseReason = null
+    this.pausedPhase = null
+    this.pausedNote = null
     this.streak = 0
     this.tick = 0
     this.note = this.getIdleNote(prefix)
@@ -196,6 +308,12 @@ export class GameEngine {
 
     this.currentLevel = level
     this.balls = []
+    this.bridgePulseEndsAt = 0
+    this.pausedBridgePulseRemainingMs = 0
+    this.pauseReason = null
+    this.pausedPhase = null
+    this.pausedNote = null
+    this.resetLevelTimer()
     this.resetRouteState()
 
     if (this.phase === 'idle') {
@@ -205,6 +323,65 @@ export class GameEngine {
       this.note = `Level ${level} selected. Route the signal through each relay window in order.`
     }
 
+    this.emitSnapshot()
+  }
+
+  activateBridgePulse(now: number): void {
+    if (this.phase !== 'running') {
+      return
+    }
+
+    if (this.utilityCharges <= 0) {
+      return
+    }
+
+    if (this.isBridgePulseActive(now)) {
+      return
+    }
+
+    this.utilityCharges -= 1
+    this.bridgePulseEndsAt = now + BRIDGE_PULSE_DURATION_MS
+    this.note = `Bridge pulse live for ${formatDurationMs(BRIDGE_PULSE_DURATION_MS)}. Side locks suppressed.`
+    this.emitSnapshot()
+  }
+
+  pause(now: number): void {
+    if (this.phase !== 'running' && this.phase !== 'waiting') {
+      return
+    }
+
+    this.pauseReason = 'focus'
+    this.pausedPhase = this.phase
+    this.pausedNote = this.note
+    this.pausedBridgePulseRemainingMs = this.getBridgePulseRemainingMs(now)
+    this.bridgePulseEndsAt = 0
+    this.captureLevelTimer(now)
+    this.phase = 'paused'
+    this.note = 'Session paused in the control deck. Press Resume Game or click a room to continue.'
+    this.emitSnapshot()
+  }
+
+  resume(now: number): void {
+    if (this.phase !== 'paused' || this.pauseReason !== 'focus') {
+      return
+    }
+
+    this.phase = this.pausedPhase ?? (this.balls.length > 0 ? 'running' : 'waiting')
+    this.pauseReason = null
+    this.pausedPhase = null
+    this.note = this.pausedNote ?? this.note
+    this.pausedNote = null
+
+    if (this.pausedBridgePulseRemainingMs > 0) {
+      this.bridgePulseEndsAt = now + this.pausedBridgePulseRemainingMs
+      this.pausedBridgePulseRemainingMs = 0
+    }
+
+    if (this.phase === 'running') {
+      this.resumeLevelTimer(now)
+    }
+
+    this.lastStepAt = now
     this.emitSnapshot()
   }
 
@@ -223,7 +400,13 @@ export class GameEngine {
     }
 
     this.initializeRouteTargets(activeWindows, difficulty)
+    this.bridgePulseEndsAt = 0
+    this.pausedBridgePulseRemainingMs = 0
+    this.pauseReason = null
+    this.pausedPhase = null
+    this.pausedNote = null
     this.balls = this.createBallSet(activeWindows, difficulty, this.getObstacles(activeWindows))
+    this.startLevelTimer(Date.now())
     this.phase = 'running'
     this.note = this.getRoundIntro(activeWindows)
     this.emitSnapshot()
@@ -286,6 +469,9 @@ export class GameEngine {
 
   step(now: number): void {
     this.pruneWindows(now)
+    if (this.bridgePulseEndsAt > 0 && now >= this.bridgePulseEndsAt) {
+      this.bridgePulseEndsAt = 0
+    }
 
     if (this.phase === 'idle' || this.phase === 'paused') {
       return
@@ -313,6 +499,7 @@ export class GameEngine {
 
     if (this.balls.length === 0) {
       this.balls = this.createBallSet(activeWindows, difficulty, obstacles)
+      this.startLevelTimer(now)
       this.lastStepAt = now
       this.emitSnapshot()
       return
@@ -324,7 +511,7 @@ export class GameEngine {
       const seedWindow = findContainingWindow(activeWindows, ball.x, ball.y)
         ?? activeWindows.find((windowState) => windowState.id === ball.ownerWindowId)
         ?? activeWindows[0]
-      const motionWindows = getConnectedWindows(activeWindows, seedWindow.id)
+      const motionWindows = getConnectedWindows(activeWindows, seedWindow.id, this.getEffectiveBlockedEdges(now))
       const motionObstacles = obstacles.filter((obstacle) =>
         motionWindows.some((windowState) => windowState.id === obstacle.windowId),
       )
@@ -341,6 +528,7 @@ export class GameEngine {
       }
     })
     this.tick += 1
+    this.updateLevelTimer(now)
 
     const activeScoreNode = this.getActiveScoreNodeState(activeWindows, difficulty, obstacles, activeTarget)
     this.resolveScoreNodeState(activeWindows, activeScoreNode)
@@ -351,7 +539,7 @@ export class GameEngine {
       )
 
       if (routeBall) {
-        this.handleRouteHit(activeWindows, activeTarget, now)
+        this.handleRouteHit(activeWindows, activeTarget, difficulty, now)
         return
       }
     }
@@ -359,7 +547,12 @@ export class GameEngine {
     this.emitSnapshot()
   }
 
-  private handleRouteHit(activeWindows: WindowState[], activeTarget: TargetState, now: number): void {
+  private handleRouteHit(
+    activeWindows: WindowState[],
+    activeTarget: TargetState,
+    difficulty: DifficultyLevel,
+    now: number,
+  ): void {
     if (activeTarget.kind === 'bridge') {
       this.currentRouteStep += 1
       this.lastStepAt = now
@@ -371,14 +564,20 @@ export class GameEngine {
     const clearedLevel = this.currentLevel
     const goalWindow = activeWindows.find((windowState) => windowState.id === activeTarget.windowId)
     const wasCompleted = this.completedLevels.has(clearedLevel)
+    const clearTimeMs = this.getCurrentLevelTime(now)
+    const clearPerformance = this.recordLevelPerformance(clearedLevel, clearTimeMs, difficulty)
 
     this.completedLevels.add(clearedLevel)
     if (!wasCompleted) {
       this.score += 1
     }
+    this.score += clearPerformance.medalScoreDelta
+    this.utilityCharges += clearPerformance.utilityChargeDelta
     this.streak += 1
     this.bestStreak = Math.max(this.bestStreak, this.streak)
     this.balls = []
+    this.bridgePulseEndsAt = 0
+    this.resetLevelTimer()
     this.resetRouteState()
     this.lastStepAt = now
 
@@ -386,14 +585,18 @@ export class GameEngine {
       this.maxUnlockedLevel = Math.max(this.maxUnlockedLevel, clearedLevel + 1)
       this.currentLevel = Math.min(MAX_LEVEL, clearedLevel + 1)
       this.phase = 'waiting'
-      this.note = `Level ${clearedLevel} cleared in ${goalWindow?.title ?? 'the goal window'}. Advancing to level ${this.currentLevel}.`
+      this.note = `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)} at ${goalWindow?.title ?? 'the goal window'}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(clearPerformance.utilityChargeDelta)} Advancing to level ${this.currentLevel}.`
       this.emitSnapshot()
       return
     }
 
     this.maxUnlockedLevel = MAX_LEVEL
     this.phase = 'paused'
-    this.note = `Level ${clearedLevel} cleared in ${goalWindow?.title ?? 'the goal window'}. All levels unlocked. Select a level to replay.`
+    this.pauseReason = 'campaign_complete'
+    this.pausedPhase = null
+    this.pausedNote = null
+    this.pausedBridgePulseRemainingMs = 0
+    this.note = `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)} at ${goalWindow?.title ?? 'the goal window'}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(clearPerformance.utilityChargeDelta)} All levels unlocked. Select a level to replay.`
     this.emitSnapshot()
   }
 
@@ -591,6 +794,7 @@ export class GameEngine {
 
   private initializeRouteTargets(activeWindows: WindowState[], difficulty: DifficultyLevel): void {
     this.currentRouteStep = 0
+    this.blockedEdges = this.createBlockedEdges(activeWindows, difficulty)
     this.obstacleAnchors = this.createObstacleAnchors(activeWindows, difficulty)
     const obstacles = this.getObstacles(activeWindows)
     const targetWindows = activeWindows.slice(1)
@@ -621,6 +825,7 @@ export class GameEngine {
     this.scoreNodeAnchors.clear()
     this.obstacleAnchors.clear()
     this.obstacleHitPoints.clear()
+    this.blockedEdges.clear()
     this.claimedScoreNodeWindowIds.clear()
     this.expiredScoreNodeWindowIds.clear()
     this.enteredScoreNodeWindowIds.clear()
@@ -685,6 +890,7 @@ export class GameEngine {
     difficulty: DifficultyLevel,
   ): Map<string, ObstacleAnchor[]> {
     const anchors = new Map<string, ObstacleAnchor[]>()
+    const obstacleProfile = getObstacleProfileForLevel(difficulty.level)
 
     activeWindows.forEach((windowState, index) => {
       if (index === 0) {
@@ -693,7 +899,7 @@ export class GameEngine {
       }
 
       const isGoal = index === activeWindows.length - 1
-      const count = this.getObstacleCount(difficulty.level, isGoal)
+      const count = isGoal ? obstacleProfile.goalCount : obstacleProfile.relayCount
       const offset = (this.currentLevel * 3) + (windowState.slot * 5) + index
 
       anchors.set(
@@ -708,24 +914,34 @@ export class GameEngine {
     return anchors
   }
 
-  private getObstacleCount(level: number, isGoal: boolean): number {
-    if (isGoal) {
-      if (level >= 7) {
-        return 3
-      }
+  private createBlockedEdges(activeWindows: WindowState[], difficulty: DifficultyLevel): Map<string, WindowEdge[]> {
+    const blockedEdges = new Map<string, WindowEdge[]>()
+    const profile = getSideBlockProfileForLevel(difficulty.level)
 
-      if (level >= 4) {
-        return 2
-      }
-
-      return 1
+    for (const windowState of activeWindows) {
+      blockedEdges.set(windowState.id, [])
     }
 
-    if (level >= 6) {
-      return 2
+    if (profile.blockedRoomCount <= 0 || profile.maxEdgesPerRoom <= 0) {
+      return blockedEdges
     }
 
-    return 1
+    const candidateWindows = activeWindows.slice(1)
+    const orderedCandidates = rotateByOffset(
+      candidateWindows,
+      getSeededIndex(difficulty.level, Math.max(1, candidateWindows.length), 211),
+    )
+    const availablePatterns = SIDE_BLOCK_PATTERNS.filter((pattern) => pattern.length <= profile.maxEdgesPerRoom)
+    const blockedRoomCount = Math.min(profile.blockedRoomCount, orderedCandidates.length)
+
+    for (let index = 0; index < blockedRoomCount; index += 1) {
+      const windowState = orderedCandidates[index]
+      const pattern = availablePatterns[getSeededIndex(difficulty.level, availablePatterns.length, (windowState.slot * 17) + 13 + index)]
+
+      blockedEdges.set(windowState.id, [...pattern])
+    }
+
+    return blockedEdges
   }
 
   private pickObstacleTemplates(count: number, offset: number): ObstacleAnchor[] {
@@ -855,7 +1071,8 @@ export class GameEngine {
       this.claimedScoreNodeWindowIds.add(scoreWindowId)
       this.enteredScoreNodeWindowIds.delete(scoreWindowId)
       this.score += activeScoreNode.value
-      this.note = `${roomTitle} bonus secured. +${activeScoreNode.value} score.`
+      this.utilityCharges += SCORE_NODE_CHARGE_VALUE
+      this.note = `${roomTitle} bonus secured. +${activeScoreNode.value} score. +${SCORE_NODE_CHARGE_VALUE} pulse charge.`
       return
     }
 
@@ -874,16 +1091,172 @@ export class GameEngine {
     this.note = `${roomTitle} bonus lost.`
   }
 
+  private startLevelTimer(now: number): void {
+    this.currentLevelStartedAt = now
+    this.currentLevelElapsedMs = 0
+  }
+
+  private captureLevelTimer(now: number): void {
+    if (this.currentLevelStartedAt === null) {
+      return
+    }
+
+    this.currentLevelElapsedMs = Math.max(0, now - this.currentLevelStartedAt)
+    this.currentLevelStartedAt = null
+  }
+
+  private resumeLevelTimer(now: number): void {
+    this.currentLevelStartedAt = now - this.currentLevelElapsedMs
+  }
+
+  private updateLevelTimer(now: number): void {
+    if (this.currentLevelStartedAt === null) {
+      return
+    }
+
+    this.currentLevelElapsedMs = Math.max(0, now - this.currentLevelStartedAt)
+  }
+
+  private resetLevelTimer(): void {
+    this.currentLevelStartedAt = null
+    this.currentLevelElapsedMs = 0
+  }
+
+  private getCurrentLevelTime(now: number): number {
+    if (this.currentLevelStartedAt === null) {
+      return this.currentLevelElapsedMs
+    }
+
+    this.currentLevelElapsedMs = Math.max(0, now - this.currentLevelStartedAt)
+    return this.currentLevelElapsedMs
+  }
+
+  private recordBestLevelTime(level: number, timeMs: number): boolean {
+    const previousBest = this.bestLevelTimesMs.get(level)
+    if (previousBest !== undefined && previousBest <= timeMs) {
+      return false
+    }
+
+    this.bestLevelTimesMs.set(level, timeMs)
+    return true
+  }
+
+  private recordLevelPerformance(
+    level: number,
+    timeMs: number,
+    difficulty: DifficultyLevel,
+  ): {
+    isBestTime: boolean
+    currentMedal: MedalTier
+    bestMedal: MedalTier
+    isNewMedal: boolean
+    medalScoreDelta: number
+    utilityChargeDelta: number
+  } {
+    const isBestTime = this.recordBestLevelTime(level, timeMs)
+    const currentMedal = getMedalTierForTime(difficulty.medalThresholds, timeMs)
+    const previousMedal = this.bestLevelMedals.get(level) ?? 'none'
+    const isNewMedal = compareMedalTiers(currentMedal, previousMedal) > 0
+    const bestMedal = isNewMedal ? currentMedal : previousMedal
+    const medalScoreDelta = Math.max(0, getMedalScoreBonus(bestMedal) - getMedalScoreBonus(previousMedal))
+
+    if (isNewMedal && bestMedal !== 'none') {
+      this.bestLevelMedals.set(level, bestMedal)
+    }
+
+    return {
+      isBestTime,
+      currentMedal,
+      bestMedal,
+      isNewMedal,
+      medalScoreDelta,
+      utilityChargeDelta: medalScoreDelta,
+    }
+  }
+
+  private getMedalNote(
+    performance: {
+      currentMedal: MedalTier
+      bestMedal: MedalTier
+      isNewMedal: boolean
+      medalScoreDelta: number
+      utilityChargeDelta: number
+    },
+  ): string {
+    if (performance.isNewMedal) {
+      const label = capitalizeMedal(performance.bestMedal)
+      if (performance.medalScoreDelta > 0) {
+        return ` ${label} medal secured. +${performance.medalScoreDelta} score.`
+      }
+
+      return ` ${label} medal secured.`
+    }
+
+    if (performance.currentMedal === 'none') {
+      return performance.bestMedal === 'none'
+        ? ' No medal secured.'
+        : ` ${capitalizeMedal(performance.bestMedal)} medal record stands.`
+    }
+
+    if (compareMedalTiers(performance.bestMedal, performance.currentMedal) > 0) {
+      return ` ${capitalizeMedal(performance.currentMedal)} pace clear. ${capitalizeMedal(performance.bestMedal)} medal record stands.`
+    }
+
+    return ` ${capitalizeMedal(performance.bestMedal)} medal held.`
+  }
+
+  private getUtilityRewardNote(chargeDelta: number): string {
+    if (chargeDelta <= 0) {
+      return ''
+    }
+
+    return ` +${chargeDelta} pulse charge${chargeDelta === 1 ? '' : 's'}.`
+  }
+
+  private getBridgePulseRemainingMs(now: number): number {
+    if (this.phase === 'paused' && this.pauseReason === 'focus') {
+      return this.pausedBridgePulseRemainingMs
+    }
+
+    return this.bridgePulseEndsAt > now ? this.bridgePulseEndsAt - now : 0
+  }
+
+  private getEffectiveBlockedEdges(now: number): Map<string, WindowEdge[]> {
+    return this.isBridgePulseActive(now) ? EMPTY_BLOCKED_EDGES : this.blockedEdges
+  }
+
+  private getActiveUtilityState(now = Date.now()): GameSnapshot['activeUtility'] {
+    const remainingMs = this.getBridgePulseRemainingMs(now)
+    if (remainingMs <= 0) {
+      return null
+    }
+
+    return {
+      kind: 'bridge_pulse',
+      label: 'BRIDGE PULSE',
+      remainingMs,
+    }
+  }
+
+  private isBridgePulseActive(now: number): boolean {
+    return this.getBridgePulseRemainingMs(now) > 0
+  }
+
   private getRouteWindowStates(activeWindows: WindowState[]): RouteWindowState[] {
     const bridgeCount = Math.max(0, activeWindows.length - 2)
+    const blockedEdgesSuppressed = this.isBridgePulseActive(Date.now())
 
     return activeWindows.map((windowState, index) => {
+      const blockedEdges = [...(this.blockedEdges.get(windowState.id) ?? [])]
+
       if (index === 0) {
         return {
           id: windowState.id,
           role: 'start',
           order: 0,
           status: 'ready',
+          blockedEdges,
+          blockedEdgesSuppressed,
         }
       }
 
@@ -893,6 +1266,8 @@ export class GameEngine {
           role: 'goal',
           order: index,
           status: this.currentRouteStep >= bridgeCount ? 'active' : 'locked',
+          blockedEdges,
+          blockedEdgesSuppressed,
         }
       }
 
@@ -909,6 +1284,8 @@ export class GameEngine {
         role: 'bridge',
         order: bridgeIndex,
         status,
+        blockedEdges,
+        blockedEdgesSuppressed,
       }
     })
   }
@@ -918,10 +1295,15 @@ export class GameEngine {
     const firstBridge = activeWindows[1]
     const goalWindow = activeWindows[activeWindows.length - 1]
     const obstacleCount = this.getObstacles(activeWindows).filter((obstacle) => !obstacle.destroyed).length
+    const sideLockCount = activeWindows.reduce((count, windowState) => count + (this.blockedEdges.get(windowState.id)?.length ?? 0), 0)
+    const hazardSummary = [
+      `${obstacleCount} barrier${obstacleCount === 1 ? '' : 's'}`,
+      sideLockCount > 0 ? `${sideLockCount} side lock${sideLockCount === 1 ? '' : 's'}` : '',
+    ].filter(Boolean).join(' and ')
 
     return firstBridge
-      ? `Level ${this.currentLevel} live. ${obstacleCount} barrier${obstacleCount === 1 ? '' : 's'} online. Start in ${startWindow?.title ?? 'Window 1'}, link ${firstBridge.title} first, then route to ${goalWindow?.title ?? 'the goal'}.`
-      : `Level ${this.currentLevel} live. ${obstacleCount} barrier${obstacleCount === 1 ? '' : 's'} online. Route the signal to ${goalWindow?.title ?? 'the goal'}.`
+      ? `Level ${this.currentLevel} live. ${hazardSummary} online. Start in ${startWindow?.title ?? 'Window 1'}, link ${firstBridge.title} first, then route to ${goalWindow?.title ?? 'the goal'}.`
+      : `Level ${this.currentLevel} live. ${hazardSummary} online. Route the signal to ${goalWindow?.title ?? 'the goal'}.`
   }
 
   private getProgressNote(activeWindows: WindowState[]): string {
@@ -959,9 +1341,45 @@ function randomBetween(min: number, max: number): number {
   return min + (Math.random() * (max - min))
 }
 
+function rotateByOffset<T>(items: T[], offset: number): T[] {
+  if (items.length <= 1) {
+    return [...items]
+  }
+
+  const normalizedOffset = ((offset % items.length) + items.length) % items.length
+  return [...items.slice(normalizedOffset), ...items.slice(0, normalizedOffset)]
+}
+
+function getSeededIndex(level: number, length: number, salt: number): number {
+  if (length <= 0) {
+    return 0
+  }
+
+  const raw = Math.sin((level * 12.9898) + (salt * 78.233)) * 43758.5453123
+  const unit = raw - Math.floor(raw)
+  return Math.floor(unit * length) % length
+}
+
+function formatDurationMs(durationMs: number): string {
+  const totalTenths = Math.max(0, Math.round(durationMs / 100))
+  const minutes = Math.floor(totalTenths / 600)
+  const seconds = Math.floor((totalTenths % 600) / 10)
+  const tenths = totalTenths % 10
+
+  return `${minutes}:${String(seconds).padStart(2, '0')}.${tenths}`
+}
+
+function capitalizeMedal(tier: MedalTier): string {
+  return tier.charAt(0).toUpperCase() + tier.slice(1)
+}
+
+function isMedalTier(value: unknown): value is MedalTier {
+  return value === 'none' || value === 'bronze' || value === 'silver' || value === 'gold'
+}
+
 function isCatchAttemptPayload(value: CatchAttemptPayload | undefined): value is CatchAttemptPayload {
   return !!value
-    && typeof value.id === 'string'
+    && true
     && Number.isFinite(value.worldX)
     && Number.isFinite(value.worldY)
 }

@@ -16,14 +16,20 @@ The current game is a routing puzzle:
 
 This is a playable prototype with:
 
-- 8 unlockable levels
+- 100 generated unlockable levels
 - randomized non-touching popup layouts per level
 - authoritative host-side simulation
 - popup recall/focus controls
 - route-based progression through relay rooms
 - barrier obstacles and click-to-shoot clearing
+- generated blocked room-side locks
 - optional relay-room score nodes
 - local progress persistence in `localStorage`
+- per-level timer with saved best times
+- generated bronze / silver / gold clear-time medals
+- bridge pulse utility charges earned during a run
+- synthesized room-local audio feedback
+- active room count capped at 8 pending further browser ergonomics testing
 - compact popup UI and host control deck
 
 Planned next systems are documented in [docs/ROADMAP.md](/Users/colin/Projects/bouced/docs/ROADMAP.md).
@@ -59,13 +65,20 @@ Each level uses a subset of popup rooms based on difficulty. The first active ro
 
 Relay and goal rooms can contain barriers that physically block the ball. Barriers can be destroyed by clicking inside the room. Once the current relay room is cleared, it can spawn a temporary score node. Routing the ball through that node awards bonus score, but the pickup is lost if the ball leaves the room first.
 
+Later levels also introduce blocked room sides. A touching room does not automatically connect if one of the touching edges is locked, so placement has to respect both distance and entry direction.
+
+Each level also generates bronze, silver, and gold clear-time targets. Best times and best medals are saved locally per level, and improving a medal rank grants extra score on top of the base level-clear reward.
+
+Bonus pickups and stronger medal clears can also award `bridge pulse` charges. Spending one from the host deck temporarily suppresses side locks, giving the ball a short window to cross otherwise blocked room edges.
+
 The ball is simulated in desktop coordinates, but it is constrained by the live geometry of connected popup rooms. Moving rooms changes the reachable shape of the playfield without changing the ball's velocity. If rooms are disconnected, the ball bounces inside its current connected component.
 
 ## Controls
 
 - `Start Game`: open or relayout the popup rooms for the selected level and start the simulation
 - `Resume Game`: same primary button while a session is active; brings the popup cluster back to the front and prioritizes the room that currently owns the ball
-- `Reseed Target`: respawn the route targets and signal ball for the current level
+- `Bridge Pulse`: spend one utility charge to temporarily suppress side locks
+- `Reseed Target`: respawn the route targets and signal ball for the current level and reset that level timer
 - `End Session`: close spawned game windows and end the active run while keeping saved progression
 - Click inside a popup room: shoot barriers at the click point
 - Click anywhere in a popup room: also recalls the room cluster to the front
@@ -117,7 +130,7 @@ Notes:
 - Popups must be allowed by the browser.
 - The host remains the source of truth for simulation and progression.
 - Browser chrome on popup windows cannot be fully hidden, so closing/minimizing remains OS/browser controlled.
-- Current gameplay includes obstacle clearing and optional bonus pickups, but upgrades and blocked room sides are still future work.
+- Current gameplay includes obstacle clearing, optional bonus pickups, side locks, and time medals, but upgrades are still future work.
 
 ## Why The Physics Are Custom
 

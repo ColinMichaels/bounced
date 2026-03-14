@@ -62,6 +62,8 @@ Responsibilities:
 
 - maintain authoritative room registry
 - own level selection, unlocks, score, streak, and campaign progression
+- track current attempt time, saved per-level best times, and best earned medals
+- manage run-local bridge-pulse charges and active utility state
 - spawn and update the signal ball
 - derive room-local obstacle geometry
 - derive route state: start room, relay rooms, goal room
@@ -73,6 +75,7 @@ Files:
 
 - [src/client/main.ts](/Users/colin/Projects/bouced/src/client/main.ts)
 - [src/client/renderer.ts](/Users/colin/Projects/bouced/src/client/renderer.ts)
+- [src/client/audio.ts](/Users/colin/Projects/bouced/src/client/audio.ts)
 
 Responsibilities:
 
@@ -81,7 +84,9 @@ Responsibilities:
 - render the room-local slice of the shared simulation
 - display compact room number and route status
 - forward click input as room shots
-- render barriers, route targets, and bonus pickups
+- render barriers, route targets, bonus pickups, and side locks
+- synthesize room-local audio feedback for impacts and completions
+- reflect active utility states like bridge-pulse lock suppression
 
 ### Shared Protocol
 
@@ -127,8 +132,11 @@ The host worker ticker sends periodic tick events into the host UI. On each tick
 - active rooms for the selected level are derived
 - ball state is retuned to current difficulty
 - the ball advances only within the connected component of its current room
+- room-side locks can reject otherwise touching room connections
 - relay / goal room barriers are applied as internal collision geometry
 - optional relay-room score pickups are derived from the current room state
+- medal pace is evaluated from generated per-level clear-time thresholds
+- active bridge-pulse utility can temporarily suppress side locks
 - relay / goal collisions are tested
 - a new `GameSnapshot` is broadcast
 
@@ -151,7 +159,7 @@ Each level defines:
 - ball speed
 - ball radius
 
-The current difficulty table spans 8 levels and scales from 3 to 7 active rooms.
+The current generator spans 100 levels and scales from 3 to 8 active rooms.
 
 ### Route model
 
@@ -167,12 +175,17 @@ Rules:
 
 - the ball always spawns in the start room
 - relay and goal rooms can contain static barrier objects
+- higher levels can assign blocked edges to active rooms
 - barriers can be destroyed via room clicks
+- bonus pickups and stronger medal clears can award bridge-pulse charges
+- bridge pulse temporarily suppresses room-side locks for the active run
 - only one relay target is active at a time
 - the goal target stays locked until all relays are completed
 - cleared active relay rooms can spawn one optional score pickup
 - routing the ball through that pickup grants bonus score
 - that pickup is lost if the ball leaves the room first
+- each level also defines bronze / silver / gold clear-time thresholds
+- improving a saved medal rank grants extra score
 - clearing a level unlocks the next level
 - players may replay lower unlocked levels
 
@@ -184,6 +197,7 @@ Instead:
 
 - each room contributes a playable rectangle from its canvas bounds
 - the engine computes the connected room set that contains the ball
+- blocked room edges can prevent adjacency even if two rooms touch or overlap
 - the ball can move only inside that connected union
 - disconnected edges act like walls
 - overlapping or edge-connected rooms allow crossings

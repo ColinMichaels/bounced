@@ -12,15 +12,18 @@ Implemented now:
 - custom connectivity-based ball physics
 - ordered `start -> relay -> goal` progression
 - static barrier obstacles in relay / goal rooms
+- generated blocked room-side locks
 - click-to-shoot barrier clearing
 - optional score nodes in cleared relay rooms
-- campaign unlock flow across 8 levels
+- campaign unlock flow across 100 generated levels
+- generated clear-time medals with persistent best ranks
+- bridge-pulse helper utility with spendable run charges
+- synthesized room-local audio feedback
 - compact host and popup UI
 
 Not implemented yet:
 
 - upgrades / abilities
-- blocked room sides
 - decoys / multiple active balls as a real mode
 
 ## Near-Term TODO
@@ -78,23 +81,25 @@ Planned shape:
 - hitting that target awards points, charges, or upgrades
 - final goal remains the level-completion condition
 
-## Mid-Term Gameplay Features
-
-### Room-side locks
+### 4. Time medals and run pacing
 
 Goal:
 
-- make specific room edges non-passable
+- make level timer performance matter beyond simple bragging rights
 
-Why:
+Current state:
 
-- adds authored routing constraints
-- increases puzzle difficulty without only increasing speed
+- each generated level now includes bronze / silver / gold time targets
+- best times and best earned medals persist locally
+- improving a medal rank grants extra score
 
-Likely implementation:
+Planned shape:
 
-- per-room metadata like `blockedEdges: ('left' | 'right' | 'up' | 'down')[]`
-- physics treats blocked edges as walls even if another room touches there
+- add medal-based run modifiers or unlockable perks
+- layer streak / timer bonuses into upgrades instead of only raw score
+- surface medal goals more clearly inside the run, not just on the host deck
+
+## Mid-Term Gameplay Features
 
 ### Upgrades and helper abilities
 
@@ -107,8 +112,13 @@ Candidate abilities:
 
 - short slow-motion pulse
 - temporary route ping
-- one-time edge unlock
 - obstacle-clearing burst
+
+Current state:
+
+- first helper utility is now `bridge pulse`
+- bonus pickups and stronger medal clears can award charges
+- spending a charge temporarily suppresses room-side locks
 
 ### Stronger level design
 
@@ -204,9 +214,8 @@ These still need real playtesting rather than speculation:
 
 ## Recommended Build Order
 
-1. Convert popup clicks into an actual shot action.
-2. Add destructible blockers and room-clear states.
-3. Spawn score / upgrade targets after blockers are cleared.
-4. Add room-side locks.
-5. Add first helper ability.
-6. Rebalance levels around the new systems.
+1. Add a second helper ability with a different problem-space than bridge pulse.
+2. Turn more score and medal rewards into spendable run resources.
+3. Rebalance generated levels around utilities, side locks, and obstacles together.
+4. Decide whether late levels need stronger hinting or alternate modes.
+5. Explore decoy / multi-ball challenge variants.

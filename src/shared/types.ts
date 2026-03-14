@@ -61,12 +61,15 @@ export interface ObstacleState {
 
 export type RouteWindowRole = 'start' | 'bridge' | 'goal'
 export type RouteWindowStatus = 'ready' | 'active' | 'cleared' | 'locked'
+export type WindowEdge = 'left' | 'right' | 'up' | 'down'
 
 export interface RouteWindowState {
   id: string
   role: RouteWindowRole
   order: number
   status: RouteWindowStatus
+  blockedEdges: WindowEdge[]
+  blockedEdgesSuppressed: boolean
 }
 
 export interface TargetState extends GoalState {
@@ -80,6 +83,12 @@ export interface ScoreNodeState extends GoalState {
   value: number
 }
 
+export interface ActiveUtilityState {
+  kind: 'bridge_pulse'
+  label: string
+  remainingMs: number
+}
+
 export interface CatchAttemptPayload {
   id: string
   localX: number
@@ -89,7 +98,14 @@ export interface CatchAttemptPayload {
   tick: number
 }
 
-export type TransitionDirection = 'left' | 'right' | 'up' | 'down'
+export type TransitionDirection = WindowEdge
+export type MedalTier = 'none' | 'bronze' | 'silver' | 'gold'
+
+export interface MedalThresholds {
+  bronzeMs: number
+  silverMs: number
+  goldMs: number
+}
 
 export interface TransitionHint {
   sourceWindowId: string
@@ -108,15 +124,18 @@ export interface DifficultyLevel {
   activeWindows: number
   speed: number
   radius: number
+  medalThresholds: MedalThresholds
 }
 
 export interface PlayerProgressState {
-  version: 1
+  version: 3
   score: number
   bestStreak: number
   selectedLevel: number
   maxUnlockedLevel: number
   completedLevels: number[]
+  bestLevelTimesMs: Record<string, number>
+  bestLevelMedals: Record<string, MedalTier>
 }
 
 export interface GameSnapshot {
@@ -126,6 +145,10 @@ export interface GameSnapshot {
   score: number
   streak: number
   bestStreak: number
+  levelElapsedMs: number
+  bestLevelTimeMs: number | null
+  bestLevelMedal: MedalTier
+  utilityCharges: number
   selectedLevel: number
   maxUnlockedLevel: number
   completedLevels: number[]
@@ -140,6 +163,7 @@ export interface GameSnapshot {
   routeWindows: RouteWindowState[]
   activeTarget: TargetState | null
   activeScoreNode: ScoreNodeState | null
+  activeUtility: ActiveUtilityState | null
   obstacles: ObstacleState[]
   windows: WindowState[]
   balls: BallState[]
