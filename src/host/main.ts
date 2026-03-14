@@ -19,6 +19,7 @@ const startButton = must<HTMLButtonElement>('start-button')
 const utilityButton = must<HTMLButtonElement>('utility-button')
 const respawnButton = must<HTMLButtonElement>('respawn-button')
 const stopButton = must<HTMLButtonElement>('stop-button')
+const popupWarning = must<HTMLParagraphElement>('popup-warning')
 const warning = must<HTMLParagraphElement>('host-warning')
 const statusText = must<HTMLParagraphElement>('status-text')
 const detailNote = must<HTMLParagraphElement>('detail-note')
@@ -50,6 +51,9 @@ const MAX_LEVEL_RELAYS = Math.max(...DIFFICULTY_LEVELS.map((level) => Math.max(1
 const MIN_LEVEL_SPEED = Math.min(...DIFFICULTY_LEVELS.map((level) => level.speed))
 const MAX_LEVEL_SPEED = Math.max(...DIFFICULTY_LEVELS.map((level) => level.speed))
 const HOST_RENDER_INTERVAL_MS = 1000 / 12
+const POPUP_ACCESS_STORAGE_KEY = 'bounced-popup-access'
+
+type PopupAccessState = 'unknown' | 'allowed' | 'blocked'
 
 let hasStarted = false
 let readinessWarning = ''
@@ -65,9 +69,11 @@ let lastLevelSelectKey = ''
 let latestSnapshot = engine.getSnapshot()
 let renderFrameId = 0
 let lastRenderAt = 0
+let popupAccessState = loadPopupAccessState()
 
 engine.restoreProgress(progressStorage.load())
 engine.subscribe(handleEngineSnapshot)
+renderPopupWarning()
 
 window.addEventListener('focus', () => {
   updateHostFocusState(true)
@@ -137,6 +143,7 @@ startButton.addEventListener('click', () => {
   const openCount = windowManager.getOpenCount()
 
   if (openCount < initialWindowCount) {
+    setPopupAccessState('blocked')
     hasStarted = false
     readinessWarning = 'Browser blocked the play windows. Allow popups for this site, then press start again.'
     renderWarnings()
@@ -144,6 +151,7 @@ startButton.addEventListener('click', () => {
     return
   }
 
+  setPopupAccessState('allowed')
   readinessWarning = ''
 
   hasStarted = true
@@ -326,7 +334,9 @@ function renderSnapshot(snapshot: GameSnapshot): void {
 
   statusText.textContent = hasStarted
     ? snapshot.note
-    : `${snapshot.note} Allow popups, then start the game to open the signal windows.`
+    : popupAccessState === 'allowed'
+      ? snapshot.note
+      : `${snapshot.note} Allow popups, then start the game to open the signal windows.`
   detailNote.textContent = [
     `Game windows open: ${windowManager.getOpenCount()} / ${snapshot.requiredWindowCount}.`,
     `Registered windows: ${registeredCount}.`,
@@ -376,6 +386,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   }
   syncWindowFollow(snapshot)
   renderWarnings()
+  renderPopupWarning()
   syncDeckPresentation()
 }
 
@@ -523,6 +534,22 @@ function pauseForControlDeck(): void {
   audio.pause()
   engine.pause(Date.now())
   renderWarnings()
+}
+
+function renderPopupWarning(): void {
+  popupWarning.hidden = popupAccessState === 'allowed'
+}
+
+function setPopupAccessState(nextState: PopupAccessState): void {
+  popupAccessState = nextState
+
+  if (nextState === 'unknown') {
+    window.localStorage.removeItem(POPUP_ACCESS_STORAGE_KEY)
+  } else {
+    window.localStorage.setItem(POPUP_ACCESS_STORAGE_KEY, nextState)
+  }
+
+  renderPopupWarning()
 }
 
 function must<T extends HTMLElement>(id: string): T {
@@ -682,6 +709,11 @@ function hasFreshWindowBounds(snapshot: GameSnapshot, since: number): boolean {
 function syncDeckPresentation(): void {
   hostShell.dataset.sessionState = hasStarted ? 'armed' : 'idle'
   hostShell.dataset.deckFocus = hasStarted && !hostHasFocus && !pausedForDeckFocus ? 'background' : 'foreground'
+}
+
+function loadPopupAccessState(): PopupAccessState {
+  const storedValue = window.localStorage.getItem(POPUP_ACCESS_STORAGE_KEY)
+  return storedValue === 'allowed' || storedValue === 'blocked' ? storedValue : 'unknown'
 }
 
 function createSessionId(): string {
