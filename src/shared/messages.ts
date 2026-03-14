@@ -39,8 +39,8 @@ export type GameMessage =
       type: 'layout_hint'
       payload: {
         id: string
-        outerWidth: number
-        outerHeight: number
+        contentWidth: number
+        contentHeight: number
       }
     }
   | {

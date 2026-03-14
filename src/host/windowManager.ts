@@ -30,6 +30,8 @@ interface LayoutOptions {
 
 const SCREEN_MARGIN = 28
 const RELAYOUT_SCALES = [1, 0.94, 0.88, 0.82]
+const ESTIMATED_FRAME_WIDTH = 18
+const ESTIMATED_FRAME_HEIGHT = 74
 
 export class WindowManager {
   private readonly handles = new Map<string, PopupHandle>()
@@ -87,12 +89,13 @@ export class WindowManager {
       url.searchParams.set('title', title)
       url.searchParams.set('targetWidth', String(Math.round(layout.width)))
       url.searchParams.set('targetHeight', String(Math.round(layout.height)))
+      const estimatedOuterLayout = this.toEstimatedOuterSize(layout)
 
       const features = [
-        `width=${Math.round(layout.width)}`,
-        `height=${Math.round(layout.height)}`,
-        `left=${Math.round(layout.left)}`,
-        `top=${Math.round(layout.top)}`,
+        `width=${Math.round(estimatedOuterLayout.width)}`,
+        `height=${Math.round(estimatedOuterLayout.height)}`,
+        `left=${Math.round(estimatedOuterLayout.left)}`,
+        `top=${Math.round(estimatedOuterLayout.top)}`,
         'popup=yes',
         'resizable=yes',
         'scrollbars=no',
@@ -202,14 +205,16 @@ export class WindowManager {
 
         for (let slot = 0; slot < count; slot += 1) {
           const size = this.pickWindowSize(level, scale)
-          const width = Math.min(size.width, bounds.width - 8)
-          const height = Math.min(size.height, bounds.height - 8)
+          const width = Math.min(size.width, bounds.width - ESTIMATED_FRAME_WIDTH - 8)
+          const height = Math.min(size.height, bounds.height - ESTIMATED_FRAME_HEIGHT - 8)
           let placed = false
 
           for (let candidateAttempt = 0; candidateAttempt < 120; candidateAttempt += 1) {
+            const outerWidth = width + ESTIMATED_FRAME_WIDTH
+            const outerHeight = height + ESTIMATED_FRAME_HEIGHT
             const candidate = {
-              left: randomBetween(bounds.left, bounds.right - width),
-              top: randomBetween(bounds.top, bounds.bottom - height),
+              left: randomBetween(bounds.left, bounds.right - outerWidth),
+              top: randomBetween(bounds.top, bounds.bottom - outerHeight),
               width,
               height,
             }
@@ -244,18 +249,20 @@ export class WindowManager {
     const gap = profile.gap * 0.6
     const columns = Math.max(1, Math.ceil(Math.sqrt(count)))
     const rows = Math.max(1, Math.ceil(count / columns))
-    const cellWidth = Math.max(220, (bounds.width - (gap * (columns - 1))) / columns)
-    const cellHeight = Math.max(190, (bounds.height - (gap * (rows - 1))) / rows)
+    const cellWidth = Math.max(220 + ESTIMATED_FRAME_WIDTH, (bounds.width - (gap * (columns - 1))) / columns)
+    const cellHeight = Math.max(190 + ESTIMATED_FRAME_HEIGHT, (bounds.height - (gap * (rows - 1))) / rows)
     const layouts: PopupLayout[] = []
 
     for (let slot = 0; slot < count; slot += 1) {
       const column = slot % columns
       const row = Math.floor(slot / columns)
       const size = this.pickWindowSize(level, 0.78)
-      const width = Math.min(size.width, cellWidth - 12)
-      const height = Math.min(size.height, cellHeight - 12)
-      const maxLeft = bounds.left + (column * (cellWidth + gap)) + Math.max(0, cellWidth - width)
-      const maxTop = bounds.top + (row * (cellHeight + gap)) + Math.max(0, cellHeight - height)
+      const width = Math.min(size.width, cellWidth - ESTIMATED_FRAME_WIDTH - 12)
+      const height = Math.min(size.height, cellHeight - ESTIMATED_FRAME_HEIGHT - 12)
+      const outerWidth = width + ESTIMATED_FRAME_WIDTH
+      const outerHeight = height + ESTIMATED_FRAME_HEIGHT
+      const maxLeft = bounds.left + (column * (cellWidth + gap)) + Math.max(0, cellWidth - outerWidth)
+      const maxTop = bounds.top + (row * (cellHeight + gap)) + Math.max(0, cellHeight - outerHeight)
 
       layouts.push({
         left: maxLeft,
@@ -298,12 +305,16 @@ export class WindowManager {
   }
 
   private intersectsExisting(candidate: PopupLayout, existing: PopupLayout[], gap: number): boolean {
-    return existing.some((layout) =>
-      candidate.left < layout.left + layout.width + gap &&
-      candidate.left + candidate.width + gap > layout.left &&
-      candidate.top < layout.top + layout.height + gap &&
-      candidate.top + candidate.height + gap > layout.top,
-    )
+    const outerCandidate = this.toEstimatedOuterSize(candidate)
+
+    return existing.some((layout) => {
+      const outerLayout = this.toEstimatedOuterSize(layout)
+
+      return outerCandidate.left < outerLayout.left + outerLayout.width + gap &&
+      outerCandidate.left + outerCandidate.width + gap > outerLayout.left &&
+      outerCandidate.top < outerLayout.top + outerLayout.height + gap &&
+      outerCandidate.top + outerCandidate.height + gap > outerLayout.top
+    })
   }
 
   private applyLayout(ref: Window, layout: PopupLayout): void {
@@ -317,10 +328,21 @@ export class WindowManager {
   }
 
   private applySize(ref: Window, layout: PopupLayout): void {
+    const outerLayout = this.toEstimatedOuterSize(layout)
+
     try {
-      ref.resizeTo(Math.round(layout.width), Math.round(layout.height))
+      ref.resizeTo(Math.round(outerLayout.width), Math.round(outerLayout.height))
     } catch {
       // Ignore blocked resize attempts.
+    }
+  }
+
+  private toEstimatedOuterSize(layout: PopupLayout): PopupLayout {
+    return {
+      left: layout.left,
+      top: layout.top,
+      width: layout.width + ESTIMATED_FRAME_WIDTH,
+      height: layout.height + ESTIMATED_FRAME_HEIGHT,
     }
   }
 }

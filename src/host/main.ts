@@ -463,8 +463,8 @@ function sendLayoutHints(handles: ReturnType<WindowManager['ensureWindowPool']>)
       type: 'layout_hint',
       payload: {
         id: handle.id,
-        outerWidth: Math.round(handle.layout.width),
-        outerHeight: Math.round(handle.layout.height),
+        contentWidth: Math.round(handle.layout.width),
+        contentHeight: Math.round(handle.layout.height),
       },
     })
   })
@@ -480,8 +480,8 @@ function sendLayoutHint(id: string): void {
     type: 'layout_hint',
     payload: {
       id: handle.id,
-      outerWidth: Math.round(handle.layout.width),
-      outerHeight: Math.round(handle.layout.height),
+      contentWidth: Math.round(handle.layout.width),
+      contentHeight: Math.round(handle.layout.height),
     },
   })
 }
