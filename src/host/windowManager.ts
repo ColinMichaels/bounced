@@ -1,4 +1,4 @@
-import { WINDOW_POOL_GAP } from '../shared/constants'
+import { getLayoutProfileForLevel } from '../engine/difficulty'
 
 interface PopupLayout {
   left: number
@@ -28,60 +28,7 @@ interface LayoutOptions {
   relayout?: boolean
 }
 
-const LEVEL_WINDOW_SHAPES: Record<number, Array<{ width: number; height: number }>> = {
-  1: [
-    { width: 470, height: 330 },
-    { width: 410, height: 380 },
-    { width: 360, height: 430 },
-  ],
-  2: [
-    { width: 430, height: 300 },
-    { width: 360, height: 360 },
-    { width: 320, height: 410 },
-  ],
-  3: [
-    { width: 390, height: 280 },
-    { width: 340, height: 330 },
-    { width: 300, height: 380 },
-  ],
-  4: [
-    { width: 360, height: 250 },
-    { width: 300, height: 320 },
-    { width: 270, height: 360 },
-  ],
-  5: [
-    { width: 330, height: 230 },
-    { width: 290, height: 290 },
-    { width: 250, height: 340 },
-  ],
-  6: [
-    { width: 310, height: 220 },
-    { width: 270, height: 270 },
-    { width: 240, height: 320 },
-  ],
-  7: [
-    { width: 290, height: 210 },
-    { width: 250, height: 255 },
-    { width: 220, height: 300 },
-  ],
-  8: [
-    { width: 270, height: 200 },
-    { width: 230, height: 240 },
-    { width: 210, height: 280 },
-  ],
-}
-
 const SCREEN_MARGIN = 28
-const GAP_BY_LEVEL: Record<number, number> = {
-  1: WINDOW_POOL_GAP + 64,
-  2: WINDOW_POOL_GAP + 48,
-  3: WINDOW_POOL_GAP + 40,
-  4: WINDOW_POOL_GAP + 32,
-  5: WINDOW_POOL_GAP + 28,
-  6: WINDOW_POOL_GAP + 24,
-  7: WINDOW_POOL_GAP + 22,
-  8: WINDOW_POOL_GAP + 20,
-}
 const RELAYOUT_SCALES = [1, 0.94, 0.88, 0.82]
 
 export class WindowManager {
@@ -138,6 +85,8 @@ export class WindowManager {
       url.searchParams.set('id', id)
       url.searchParams.set('slot', String(slot))
       url.searchParams.set('title', title)
+      url.searchParams.set('targetWidth', String(Math.round(layout.width)))
+      url.searchParams.set('targetHeight', String(Math.round(layout.height)))
 
       const features = [
         `width=${Math.round(layout.width)}`,
@@ -190,6 +139,10 @@ export class WindowManager {
       .map((handle) => handle.id)
   }
 
+  getHandle(id: string): PopupHandle | null {
+    return this.handles.get(id) ?? null
+  }
+
   focusWindow(id: string): boolean {
     const handle = this.handles.get(id)
     if (!handle?.ref || handle.ref.closed) {
@@ -240,6 +193,7 @@ export class WindowManager {
 
   private createRandomLayouts(count: number, level: number): PopupLayout[] {
     const bounds = this.getLayoutBounds()
+    const profile = getLayoutProfileForLevel(level)
 
     for (const scale of RELAYOUT_SCALES) {
       for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -260,7 +214,7 @@ export class WindowManager {
               height,
             }
 
-            if (this.intersectsExisting(candidate, layouts, GAP_BY_LEVEL[level] * scale)) {
+            if (this.intersectsExisting(candidate, layouts, profile.gap * scale)) {
               continue
             }
 
@@ -286,7 +240,8 @@ export class WindowManager {
 
   private createFallbackLayouts(count: number, level: number): PopupLayout[] {
     const bounds = this.getLayoutBounds()
-    const gap = GAP_BY_LEVEL[level] * 0.6
+    const profile = getLayoutProfileForLevel(level)
+    const gap = profile.gap * 0.6
     const columns = Math.max(1, Math.ceil(Math.sqrt(count)))
     const rows = Math.max(1, Math.ceil(count / columns))
     const cellWidth = Math.max(220, (bounds.width - (gap * (columns - 1))) / columns)
@@ -314,9 +269,10 @@ export class WindowManager {
   }
 
   private pickWindowSize(level: number, scale: number): { width: number; height: number } {
-    const shapes = LEVEL_WINDOW_SHAPES[level] ?? LEVEL_WINDOW_SHAPES[1]
+    const profile = getLayoutProfileForLevel(level)
+    const shapes = profile.shapes
     const shape = shapes[Math.floor(Math.random() * shapes.length)]
-    const jitter = level === 1 ? 28 : 22
+    const jitter = profile.jitter
 
     return {
       width: Math.round((shape.width + randomBetween(-jitter, jitter)) * scale),

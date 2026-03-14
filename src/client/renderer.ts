@@ -26,6 +26,8 @@ const IMPACT_DECAY_PER_FRAME = 0.08
 const IMPACT_RING_GROWTH = 16
 const IMPACT_MAX_FLASHES = 8
 const COMPLETION_RING_GROWTH = 24
+const SIDE_LOCK_INSET = 10
+const SIDE_LOCK_LINE_WIDTH = 7
 
 export class BallRenderer {
   private readonly canvas: HTMLCanvasElement
@@ -77,6 +79,7 @@ export class BallRenderer {
     this.drawImpactFlashes()
     const obstacles = snapshot.obstacles.filter((obstacle) => obstacle.windowId === bounds.id && !obstacle.destroyed)
     this.drawObstacles(obstacles, bounds)
+    this.drawBlockedEdges(routeWindow, bounds)
 
     if (snapshot.balls.length === 0) {
       this.drawTarget(snapshot, bounds)
@@ -109,6 +112,20 @@ export class BallRenderer {
 
     this.decayEffects()
     this.syncPreviousBalls(snapshot.balls)
+  }
+
+  shouldAnimate(snapshot: GameSnapshot | null, bounds: WindowBoundsPayload | null): boolean {
+    if (this.impactFlashes.length > 0) {
+      return true
+    }
+
+    for (const trail of this.trail.values()) {
+      if (trail.length > 1) {
+        return true
+      }
+    }
+
+    return !!snapshot && !!bounds && snapshot.activeScoreNode?.windowId === bounds.id
   }
 
   private resize(): void {
@@ -274,6 +291,70 @@ export class BallRenderer {
       this.context.beginPath()
       this.context.roundRect(localX + 4, localY + 4, Math.max(0, obstacle.width - 8), Math.max(0, obstacle.height * 0.18), 6)
       this.context.fill()
+    }
+
+    this.context.restore()
+  }
+
+  private drawBlockedEdges(routeWindow: RouteWindowState | null, bounds: WindowBoundsPayload): void {
+    if (!routeWindow || routeWindow.blockedEdges.length === 0) {
+      return
+    }
+
+    const width = bounds.contentWidth
+    const height = bounds.contentHeight
+    const isSuppressed = routeWindow.blockedEdgesSuppressed
+    const edgeColor = isSuppressed
+      ? 'rgba(108, 239, 255, 0.82)'
+      : routeWindow.role === 'goal'
+        ? 'rgba(255, 198, 118, 0.92)'
+        : 'rgba(255, 124, 114, 0.92)'
+    const glowColor = isSuppressed
+      ? 'rgba(108, 239, 255, 0.22)'
+      : routeWindow.role === 'goal'
+        ? 'rgba(255, 198, 118, 0.26)'
+        : 'rgba(255, 124, 114, 0.24)'
+
+    this.context.save()
+    this.context.lineCap = 'round'
+    this.context.lineWidth = SIDE_LOCK_LINE_WIDTH
+    this.context.setLineDash(isSuppressed ? [8, 10] : [14, 8])
+    this.context.strokeStyle = edgeColor
+    this.context.shadowBlur = 16
+    this.context.shadowColor = glowColor
+
+    for (const edge of routeWindow.blockedEdges) {
+      this.context.beginPath()
+
+      if (edge === 'left') {
+        this.context.moveTo(SIDE_LOCK_INSET, SIDE_LOCK_INSET)
+        this.context.lineTo(SIDE_LOCK_INSET, height - SIDE_LOCK_INSET)
+      } else if (edge === 'right') {
+        this.context.moveTo(width - SIDE_LOCK_INSET, SIDE_LOCK_INSET)
+        this.context.lineTo(width - SIDE_LOCK_INSET, height - SIDE_LOCK_INSET)
+      } else if (edge === 'up') {
+        this.context.moveTo(SIDE_LOCK_INSET, SIDE_LOCK_INSET)
+        this.context.lineTo(width - SIDE_LOCK_INSET, SIDE_LOCK_INSET)
+      } else {
+        this.context.moveTo(SIDE_LOCK_INSET, height - SIDE_LOCK_INSET)
+        this.context.lineTo(width - SIDE_LOCK_INSET, height - SIDE_LOCK_INSET)
+      }
+
+      this.context.stroke()
+    }
+
+    this.context.setLineDash([])
+    this.context.shadowBlur = 0
+    this.context.fillStyle = edgeColor
+
+    for (const edge of routeWindow.blockedEdges) {
+      if (edge === 'left' || edge === 'right') {
+        const markerX = edge === 'left' ? SIDE_LOCK_INSET : width - SIDE_LOCK_INSET
+        this.context.fillRect(markerX - 2, (height / 2) - 16, 4, 32)
+      } else {
+        const markerY = edge === 'up' ? SIDE_LOCK_INSET : height - SIDE_LOCK_INSET
+        this.context.fillRect((width / 2) - 16, markerY - 2, 32, 4)
+      }
     }
 
     this.context.restore()
