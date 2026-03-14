@@ -3,6 +3,7 @@ import { clamp, findContainingWindow, getConnectedWindows, pointInCircle, rectFr
 import type { GameChannel } from '../network/channel'
 import {
   compareMedalTiers,
+  getBonusProfileForLevel,
   getDifficultyForLevel,
   getMedalScoreBonus,
   getMedalTierForTime,
@@ -12,6 +13,8 @@ import {
 } from './difficulty'
 import { advanceBall, createBall, retuneBall, stabilizeBall } from './physics'
 import type {
+  AmbientBonusKind,
+  AmbientBonusState,
   BallState,
   CatchAttemptPayload,
   DifficultyLevel,
@@ -33,6 +36,15 @@ type SnapshotListener = (snapshot: GameSnapshot) => void
 interface GoalAnchor {
   u: number
   v: number
+}
+
+interface AmbientBonusAnchor extends GoalAnchor {
+  id: string
+  windowId: string
+  kind: AmbientBonusKind
+  scoreValue: number
+  chargeValue: number
+  timeValueMs: number
 }
 
 interface ObstacleAnchor {
@@ -87,16 +99,19 @@ export class GameEngine {
   private balls: BallState[] = []
   private targetAnchors: GoalAnchor[] = []
   private scoreNodeAnchors = new Map<string, GoalAnchor>()
+  private ambientBonusAnchors: AmbientBonusAnchor[] = []
   private obstacleAnchors = new Map<string, ObstacleAnchor[]>()
   private obstacleHitPoints = new Map<string, number>()
   private blockedEdges = new Map<string, WindowEdge[]>()
   private claimedScoreNodeWindowIds = new Set<string>()
   private expiredScoreNodeWindowIds = new Set<string>()
   private enteredScoreNodeWindowIds = new Set<string>()
+  private claimedAmbientBonusIds = new Set<string>()
   private currentRouteStep = 0
   private score = 0
   private streak = 0
   private bestStreak = 0
+  private bonusCollectionCount = 0
   private utilityCharges = 0
   private bridgePulseEndsAt = 0
   private pausedBridgePulseRemainingMs = 0
@@ -180,6 +195,7 @@ export class GameEngine {
     this.pausedNote = null
     this.tick = 0
     this.balls = []
+    this.bonusCollectionCount = 0
     this.utilityCharges = 0
     this.bridgePulseEndsAt = 0
     this.pausedBridgePulseRemainingMs = 0
@@ -225,6 +241,8 @@ export class GameEngine {
     const activeWindows = this.getActiveWindows(difficulty.activeWindows, playableWindows)
     const obstacles = this.getObstacles(activeWindows)
     const activeTarget = this.getActiveTargetState(activeWindows, difficulty, obstacles)
+    const activeScoreNode = this.getActiveScoreNodeState(activeWindows, difficulty, obstacles, activeTarget)
+    const ambientBonuses = this.getAmbientBonusStates(activeWindows, difficulty, obstacles)
     const routeWindowIds = activeWindows.map((windowState) => windowState.id)
     const startWindowId = routeWindowIds[0] ?? null
     const bridgeWindowIds = routeWindowIds.slice(1, -1)
@@ -255,7 +273,9 @@ export class GameEngine {
       goalWindowId: routeWindowIds[routeWindowIds.length - 1] ?? null,
       routeWindows: this.getRouteWindowStates(activeWindows),
       activeTarget,
-      activeScoreNode: this.getActiveScoreNodeState(activeWindows, difficulty, obstacles, activeTarget),
+      activeScoreNode,
+      ambientBonuses,
+      bonusCollectionCount: this.bonusCollectionCount,
       activeUtility: this.getActiveUtilityState(),
       obstacles,
       windows: registeredWindows,
@@ -269,6 +289,7 @@ export class GameEngine {
   start(now: number): void {
     this.tick = 0
     this.balls = []
+    this.bonusCollectionCount = 0
     this.utilityCharges = 0
     this.bridgePulseEndsAt = 0
     this.pausedBridgePulseRemainingMs = 0
@@ -285,6 +306,7 @@ export class GameEngine {
 
   endGame(prefix = 'Session ended.'): void {
     this.balls = []
+    this.bonusCollectionCount = 0
     this.utilityCharges = 0
     this.bridgePulseEndsAt = 0
     this.pausedBridgePulseRemainingMs = 0
@@ -308,6 +330,7 @@ export class GameEngine {
 
     this.currentLevel = level
     this.balls = []
+    this.bonusCollectionCount = 0
     this.bridgePulseEndsAt = 0
     this.pausedBridgePulseRemainingMs = 0
     this.pauseReason = null
@@ -531,7 +554,9 @@ export class GameEngine {
     this.updateLevelTimer(now)
 
     const activeScoreNode = this.getActiveScoreNodeState(activeWindows, difficulty, obstacles, activeTarget)
+    const ambientBonuses = this.getAmbientBonusStates(activeWindows, difficulty, obstacles)
     this.resolveScoreNodeState(activeWindows, activeScoreNode)
+    this.resolveAmbientBonusState(activeWindows, ambientBonuses, now)
 
     if (activeTarget) {
       const routeBall = this.balls.find((ball) =>
@@ -792,6 +817,48 @@ export class GameEngine {
     }
   }
 
+  private getAmbientBonusStates(
+    activeWindows: WindowState[],
+    difficulty: DifficultyLevel,
+    obstacles: ObstacleState[],
+  ): AmbientBonusState[] {
+    const radius = Math.max(12, difficulty.radius * 0.9)
+
+    return this.ambientBonusAnchors.flatMap((anchor) => {
+      if (this.claimedAmbientBonusIds.has(anchor.id)) {
+        return []
+      }
+
+      const windowState = activeWindows.find((entry) => entry.id === anchor.windowId)
+      if (!windowState) {
+        return []
+      }
+
+      const rect = rectFromWindow(windowState)
+      const roomObstacles = obstacles.filter((obstacle) => obstacle.windowId === anchor.windowId && !obstacle.destroyed)
+      const margin = radius + 18
+      const x = clamp(rect.left + (rect.width * anchor.u), rect.left + margin, rect.right - margin)
+      const y = clamp(rect.top + (rect.height * anchor.v), rect.top + margin, rect.bottom - margin)
+
+      if (roomObstacles.some((obstacle) => this.targetOverlapsObstacle(x, y, radius, obstacle))) {
+        return []
+      }
+
+      return [{
+        id: anchor.id,
+        kind: anchor.kind,
+        label: this.getAmbientBonusLabel(anchor),
+        windowId: anchor.windowId,
+        x,
+        y,
+        radius,
+        scoreValue: anchor.scoreValue,
+        chargeValue: anchor.chargeValue,
+        timeValueMs: anchor.timeValueMs,
+      }]
+    })
+  }
+
   private initializeRouteTargets(activeWindows: WindowState[], difficulty: DifficultyLevel): void {
     this.currentRouteStep = 0
     this.blockedEdges = this.createBlockedEdges(activeWindows, difficulty)
@@ -817,18 +884,22 @@ export class GameEngine {
         this.scoreNodeAnchors.set(windowState.id, scoreNodeAnchor)
       }
     })
+
+    this.ambientBonusAnchors = this.createAmbientBonusAnchors(activeWindows, difficulty, obstacles)
   }
 
   private resetRouteState(): void {
     this.currentRouteStep = 0
     this.targetAnchors = []
     this.scoreNodeAnchors.clear()
+    this.ambientBonusAnchors = []
     this.obstacleAnchors.clear()
     this.obstacleHitPoints.clear()
     this.blockedEdges.clear()
     this.claimedScoreNodeWindowIds.clear()
     this.expiredScoreNodeWindowIds.clear()
     this.enteredScoreNodeWindowIds.clear()
+    this.claimedAmbientBonusIds.clear()
     this.lastShotAt = 0
   }
 
@@ -877,6 +948,133 @@ export class GameEngine {
       if (
         !obstacles.some((obstacle) => this.targetOverlapsObstacle(x, y, radius, obstacle))
         && !this.circleOverlapsTarget(x, y, radius, targetX, targetY, targetRadius + 10)
+      ) {
+        return anchor
+      }
+    }
+
+    return null
+  }
+
+  private createAmbientBonusAnchors(
+    activeWindows: WindowState[],
+    difficulty: DifficultyLevel,
+    obstacles: ObstacleState[],
+  ): AmbientBonusAnchor[] {
+    const profile = getBonusProfileForLevel(difficulty.level)
+    const candidateWindows = activeWindows.slice(1)
+    if (profile.ambientCount <= 0 || candidateWindows.length === 0) {
+      return []
+    }
+
+    const orderedWindows = rotateByOffset(
+      candidateWindows,
+      getSeededIndex(difficulty.level, Math.max(1, candidateWindows.length), 307),
+    )
+    const bonusCount = Math.min(profile.ambientCount, orderedWindows.length)
+    const anchors: AmbientBonusAnchor[] = []
+
+    for (let index = 0; index < bonusCount; index += 1) {
+      const windowState = orderedWindows[index]
+      const routeTargetIndex = activeWindows.findIndex((entry) => entry.id === windowState.id) - 1
+      const routeTargetAnchor = this.targetAnchors[routeTargetIndex] ?? null
+      const scoreNodeAnchor = this.scoreNodeAnchors.get(windowState.id) ?? null
+      const roomObstacles = obstacles.filter((obstacle) => obstacle.windowId === windowState.id && !obstacle.destroyed)
+      const kind = profile.kinds[getSeededIndex(
+        difficulty.level,
+        profile.kinds.length,
+        (windowState.slot * 37) + (index * 11) + 401,
+      )]
+      const anchor = this.createAmbientBonusAnchor(windowState, difficulty, roomObstacles, routeTargetAnchor, scoreNodeAnchor)
+
+      if (!anchor) {
+        continue
+      }
+
+      anchors.push({
+        id: `ambient-${windowState.id}-${kind}-${index}`,
+        windowId: windowState.id,
+        kind,
+        u: anchor.u,
+        v: anchor.v,
+        scoreValue: kind === 'score' ? profile.scoreValue : 0,
+        chargeValue: kind === 'charge' ? 1 : 0,
+        timeValueMs: kind === 'time' ? profile.timeValueMs : 0,
+      })
+    }
+
+    return anchors
+  }
+
+  private createAmbientBonusAnchor(
+    windowState: WindowState,
+    difficulty: DifficultyLevel,
+    obstacles: ObstacleState[],
+    routeTargetAnchor: GoalAnchor | null,
+    scoreNodeAnchor: GoalAnchor | null,
+  ): GoalAnchor | null {
+    const rect = rectFromWindow(windowState)
+    const radius = Math.max(12, difficulty.radius * 0.9)
+    const margin = radius + 18
+    const forbiddenCircles: Array<{ x: number; y: number; radius: number }> = []
+
+    if (routeTargetAnchor) {
+      const routeTargetIndex = this.targetAnchors.findIndex((anchor) => anchor === routeTargetAnchor)
+      const isGoal = routeTargetIndex === this.targetAnchors.length - 1
+      const targetRadius = isGoal
+        ? Math.max(18, difficulty.radius * 1.8)
+        : Math.max(16, difficulty.radius * 1.45)
+
+      forbiddenCircles.push({
+        x: clamp(rect.left + (rect.width * routeTargetAnchor.u), rect.left + targetRadius + 18, rect.right - targetRadius - 18),
+        y: clamp(rect.top + (rect.height * routeTargetAnchor.v), rect.top + targetRadius + 18, rect.bottom - targetRadius - 18),
+        radius: targetRadius + 10,
+      })
+    }
+
+    if (scoreNodeAnchor) {
+      const scoreNodeRadius = Math.max(12, difficulty.radius * 0.9)
+      forbiddenCircles.push({
+        x: clamp(rect.left + (rect.width * scoreNodeAnchor.u), rect.left + scoreNodeRadius + 18, rect.right - scoreNodeRadius - 18),
+        y: clamp(rect.top + (rect.height * scoreNodeAnchor.v), rect.top + scoreNodeRadius + 18, rect.bottom - scoreNodeRadius - 18),
+        radius: scoreNodeRadius + 10,
+      })
+    }
+
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      const anchor = {
+        u: randomBetween(0.18, 0.82),
+        v: randomBetween(0.18, 0.82),
+      }
+      const x = clamp(rect.left + (rect.width * anchor.u), rect.left + margin, rect.right - margin)
+      const y = clamp(rect.top + (rect.height * anchor.v), rect.top + margin, rect.bottom - margin)
+
+      if (
+        !obstacles.some((obstacle) => this.targetOverlapsObstacle(x, y, radius, obstacle))
+        && !forbiddenCircles.some((circle) => this.circleOverlapsTarget(x, y, radius, circle.x, circle.y, circle.radius))
+      ) {
+        return anchor
+      }
+    }
+
+    const fallbackAnchors: GoalAnchor[] = [
+      { u: 0.15, v: 0.2 },
+      { u: 0.85, v: 0.2 },
+      { u: 0.15, v: 0.8 },
+      { u: 0.85, v: 0.8 },
+      { u: 0.18, v: 0.5 },
+      { u: 0.82, v: 0.5 },
+      { u: 0.5, v: 0.16 },
+      { u: 0.5, v: 0.84 },
+    ]
+
+    for (const anchor of fallbackAnchors) {
+      const x = clamp(rect.left + (rect.width * anchor.u), rect.left + margin, rect.right - margin)
+      const y = clamp(rect.top + (rect.height * anchor.v), rect.top + margin, rect.bottom - margin)
+
+      if (
+        !obstacles.some((obstacle) => this.targetOverlapsObstacle(x, y, radius, obstacle))
+        && !forbiddenCircles.some((circle) => this.circleOverlapsTarget(x, y, radius, circle.x, circle.y, circle.radius))
       ) {
         return anchor
       }
@@ -1070,6 +1268,7 @@ export class GameEngine {
     if (scoreBall) {
       this.claimedScoreNodeWindowIds.add(scoreWindowId)
       this.enteredScoreNodeWindowIds.delete(scoreWindowId)
+      this.bonusCollectionCount += 1
       this.score += activeScoreNode.value
       this.utilityCharges += SCORE_NODE_CHARGE_VALUE
       this.note = `${roomTitle} bonus secured. +${activeScoreNode.value} score. +${SCORE_NODE_CHARGE_VALUE} pulse charge.`
@@ -1089,6 +1288,79 @@ export class GameEngine {
     this.enteredScoreNodeWindowIds.delete(scoreWindowId)
     this.expiredScoreNodeWindowIds.add(scoreWindowId)
     this.note = `${roomTitle} bonus lost.`
+  }
+
+  private resolveAmbientBonusState(
+    activeWindows: WindowState[],
+    ambientBonuses: AmbientBonusState[],
+    now: number,
+  ): void {
+    if (ambientBonuses.length === 0) {
+      return
+    }
+
+    for (const bonus of ambientBonuses) {
+      const collected = this.balls.some((ball) =>
+        pointInCircle(ball.x, ball.y, bonus.x, bonus.y, ball.radius + bonus.radius),
+      )
+      if (!collected) {
+        continue
+      }
+
+      const roomTitle = activeWindows.find((windowState) => windowState.id === bonus.windowId)?.title ?? 'Current room'
+      this.claimedAmbientBonusIds.add(bonus.id)
+      this.bonusCollectionCount += 1
+
+      if (bonus.scoreValue > 0) {
+        this.score += bonus.scoreValue
+      }
+      if (bonus.chargeValue > 0) {
+        this.utilityCharges += bonus.chargeValue
+      }
+      if (bonus.timeValueMs > 0) {
+        this.applyTimeBonus(now, bonus.timeValueMs)
+      }
+
+      this.note = `${roomTitle} ${this.getAmbientBonusRewardText(bonus)}`
+    }
+  }
+
+  private applyTimeBonus(now: number, timeValueMs: number): void {
+    if (timeValueMs <= 0) {
+      return
+    }
+
+    if (this.currentLevelStartedAt !== null) {
+      this.currentLevelStartedAt = Math.min(now, this.currentLevelStartedAt + timeValueMs)
+      this.currentLevelElapsedMs = Math.max(0, now - this.currentLevelStartedAt)
+      return
+    }
+
+    this.currentLevelElapsedMs = Math.max(0, this.currentLevelElapsedMs - timeValueMs)
+  }
+
+  private getAmbientBonusLabel(anchor: Pick<AmbientBonusAnchor, 'kind' | 'scoreValue' | 'chargeValue' | 'timeValueMs'>): string {
+    if (anchor.kind === 'score') {
+      return `+${anchor.scoreValue}`
+    }
+
+    if (anchor.kind === 'charge') {
+      return `P+${anchor.chargeValue}`
+    }
+
+    return `-${formatBonusSeconds(anchor.timeValueMs)}S`
+  }
+
+  private getAmbientBonusRewardText(bonus: AmbientBonusState): string {
+    if (bonus.kind === 'score') {
+      return `score cache secured. +${bonus.scoreValue} score.`
+    }
+
+    if (bonus.kind === 'charge') {
+      return `pulse cache secured. +${bonus.chargeValue} pulse charge${bonus.chargeValue === 1 ? '' : 's'}.`
+    }
+
+    return `time cache secured. -${formatDurationMsShort(bonus.timeValueMs)} from the clock.`
   }
 
   private startLevelTimer(now: number): void {
@@ -1367,6 +1639,14 @@ function formatDurationMs(durationMs: number): string {
   const tenths = totalTenths % 10
 
   return `${minutes}:${String(seconds).padStart(2, '0')}.${tenths}`
+}
+
+function formatDurationMsShort(durationMs: number): string {
+  return `${formatBonusSeconds(durationMs)}s`
+}
+
+function formatBonusSeconds(durationMs: number): string {
+  return (Math.max(0, durationMs) / 1000).toFixed(1)
 }
 
 function capitalizeMedal(tier: MedalTier): string {

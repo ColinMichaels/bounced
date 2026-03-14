@@ -24,6 +24,10 @@ const warning = must<HTMLParagraphElement>('host-warning')
 const statusText = must<HTMLParagraphElement>('status-text')
 const detailNote = must<HTMLParagraphElement>('detail-note')
 const levelSelect = must<HTMLDivElement>('level-select')
+const levelChangeDialog = must<HTMLDialogElement>('level-change-dialog')
+const levelChangeMessage = must<HTMLParagraphElement>('level-change-message')
+const confirmLevelChangeButton = must<HTMLButtonElement>('confirm-level-change-button')
+const cancelLevelChangeButton = must<HTMLButtonElement>('cancel-level-change-button')
 const scoreValue = must<HTMLElement>('score-value')
 const streakValue = must<HTMLElement>('streak-value')
 const bestStreakValue = must<HTMLElement>('best-streak-value')
@@ -70,6 +74,7 @@ let latestSnapshot = engine.getSnapshot()
 let renderFrameId = 0
 let lastRenderAt = 0
 let popupAccessState = loadPopupAccessState()
+let pendingLevelSelection: number | null = null
 
 engine.restoreProgress(progressStorage.load())
 engine.subscribe(handleEngineSnapshot)
@@ -98,8 +103,29 @@ levelSelect.addEventListener('click', (event) => {
 
   const level = Number(target.dataset.level)
   if (Number.isFinite(level)) {
-    engine.selectLevel(level)
+    requestLevelSelection(level)
   }
+})
+
+confirmLevelChangeButton.addEventListener('click', () => {
+  const level = pendingLevelSelection
+  closeLevelChangeDialog()
+
+  if (level === null) {
+    return
+  }
+
+  stopActiveSession('Session ended to load a different level.')
+  engine.selectLevel(level)
+})
+
+cancelLevelChangeButton.addEventListener('click', () => {
+  closeLevelChangeDialog()
+})
+
+levelChangeDialog.addEventListener('cancel', (event) => {
+  event.preventDefault()
+  closeLevelChangeDialog()
 })
 
 ticker.onmessage = (event: MessageEvent<{ type: 'tick'; now: number }>) => {
@@ -178,18 +204,7 @@ utilityButton.addEventListener('click', () => {
 
 stopButton.addEventListener('click', () => {
   audio.unlock()
-  hasStarted = false
-  pausedForDeckFocus = false
-  desiredWindowCount = 0
-  readinessWarning = ''
-  lastFocusedOwnerId = null
-  lastFollowAt = 0
-  lastLayoutKey = ''
-  awaitingFreshBoundsSince = 0
-  windowManager.closeAll()
-  audio.pause()
-  engine.endGame()
-  syncDeckPresentation()
+  stopActiveSession()
 })
 
 window.addEventListener('beforeunload', () => {
@@ -342,6 +357,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     `Registered windows: ${registeredCount}.`,
     `Route: start + ${Math.max(0, snapshot.bridgeWindowIds.length)} relay${snapshot.bridgeWindowIds.length === 1 ? '' : 's'} + goal.`,
     `Barriers: ${liveObstacles.length}.`,
+    `Bonuses live: ${snapshot.ambientBonuses.length + (snapshot.activeScoreNode ? 1 : 0)}.`,
     `Goal window: ${goalWindowTitle}.`,
     `Pulse charges: ${snapshot.utilityCharges}.`,
     snapshot.activeUtility ? `Utility live: ${formatDurationMs(snapshot.activeUtility.remainingMs)} remaining.` : 'Utility ready when a charge is available.',
@@ -387,6 +403,65 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   syncWindowFollow(snapshot)
   renderWarnings()
   renderPopupWarning()
+  syncDeckPresentation()
+}
+
+function requestLevelSelection(level: number): void {
+  const snapshot = engine.getSnapshot()
+  if (level === snapshot.selectedLevel) {
+    return
+  }
+
+  if (hasStarted && snapshot.phase !== 'idle') {
+    openLevelChangeDialog(level)
+    return
+  }
+
+  engine.selectLevel(level)
+}
+
+function openLevelChangeDialog(level: number): void {
+  pendingLevelSelection = level
+  levelChangeMessage.textContent = `A session is already live. Stop it and load level ${level}?`
+
+  if (typeof levelChangeDialog.showModal === 'function') {
+    if (!levelChangeDialog.open) {
+      levelChangeDialog.showModal()
+    }
+    return
+  }
+
+  const confirmed = window.confirm(`Stop the current session and load level ${level}?`)
+  if (!confirmed) {
+    pendingLevelSelection = null
+    return
+  }
+
+  stopActiveSession('Session ended to load a different level.')
+  engine.selectLevel(level)
+}
+
+function closeLevelChangeDialog(): void {
+  pendingLevelSelection = null
+
+  if (levelChangeDialog.open) {
+    levelChangeDialog.close()
+  }
+}
+
+function stopActiveSession(prefix = 'Session ended.'): void {
+  closeLevelChangeDialog()
+  hasStarted = false
+  pausedForDeckFocus = false
+  desiredWindowCount = 0
+  readinessWarning = ''
+  lastFocusedOwnerId = null
+  lastFollowAt = 0
+  lastLayoutKey = ''
+  awaitingFreshBoundsSince = 0
+  windowManager.closeAll()
+  audio.pause()
+  engine.endGame(prefix)
   syncDeckPresentation()
 }
 

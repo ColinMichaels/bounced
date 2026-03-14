@@ -76,68 +76,75 @@ export function rectsConnect(
   rightBlockedEdges: WindowEdge[] = [],
   epsilon = 0.5,
 ): boolean {
-  const connection = getRectConnectionEdges(left, right, epsilon)
-  if (!connection) {
+  const connections = getRectConnectionEdges(left, right, epsilon)
+  if (connections.length === 0) {
     return false
   }
 
-  return !leftBlockedEdges.includes(connection.left) && !rightBlockedEdges.includes(connection.right)
+  const hasBlockedConnection = connections.some((connection) =>
+    leftBlockedEdges.includes(connection.left) || rightBlockedEdges.includes(connection.right),
+  )
+
+  return !hasBlockedConnection
 }
 
 export function getRectConnectionEdges(
   left: Rect,
   right: Rect,
   epsilon = 0.5,
-): { left: WindowEdge; right: WindowEdge } | null {
+): Array<{ left: WindowEdge; right: WindowEdge }> {
   const horizontalOverlap = overlapLength(left.left, left.right, right.left, right.right)
   const verticalOverlap = overlapLength(left.top, left.bottom, right.top, right.bottom)
+  const connections: Array<{ left: WindowEdge; right: WindowEdge }> = []
 
   if (horizontalOverlap > 0 && verticalOverlap > 0) {
-    const leftCenterX = left.left + (left.width / 2)
-    const leftCenterY = left.top + (left.height / 2)
-    const rightCenterX = right.left + (right.width / 2)
-    const rightCenterY = right.top + (right.height / 2)
-
-    if (Math.abs(rightCenterX - leftCenterX) >= Math.abs(rightCenterY - leftCenterY)) {
-      return rightCenterX >= leftCenterX
-        ? { left: 'right', right: 'left' }
-        : { left: 'left', right: 'right' }
+    if (right.left < left.left - epsilon) {
+      connections.push({ left: 'left', right: 'right' })
+    }
+    if (right.right > left.right + epsilon) {
+      connections.push({ left: 'right', right: 'left' })
+    }
+    if (right.top < left.top - epsilon) {
+      connections.push({ left: 'up', right: 'down' })
+    }
+    if (right.bottom > left.bottom + epsilon) {
+      connections.push({ left: 'down', right: 'up' })
     }
 
-    return rightCenterY >= leftCenterY
-      ? { left: 'down', right: 'up' }
-      : { left: 'up', right: 'down' }
+    if (connections.length > 0) {
+      return connections
+    }
   }
 
   if (horizontalOverlap > 0 && Math.abs(left.bottom - right.top) <= epsilon) {
-    return {
+    connections.push({
       left: 'down',
       right: 'up',
-    }
+    })
   }
 
   if (horizontalOverlap > 0 && Math.abs(right.bottom - left.top) <= epsilon) {
-    return {
+    connections.push({
       left: 'up',
       right: 'down',
-    }
+    })
   }
 
   if (verticalOverlap > 0 && Math.abs(left.right - right.left) <= epsilon) {
-    return {
+    connections.push({
       left: 'right',
       right: 'left',
-    }
+    })
   }
 
   if (verticalOverlap > 0 && Math.abs(right.right - left.left) <= epsilon) {
-    return {
+    connections.push({
       left: 'left',
       right: 'right',
-    }
+    })
   }
 
-  return null
+  return connections
 }
 
 export function getConnectedWindows<T extends WindowBoundsPayload | WindowState>(

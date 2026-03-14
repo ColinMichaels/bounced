@@ -95,6 +95,17 @@
       </section>
     </main>
 
+    <dialog id="level-change-dialog" class="confirm-dialog">
+      <h2>Switch Level?</h2>
+      <p id="level-change-message">
+        Stop the current session and load the selected level?
+      </p>
+      <div class="confirm-dialog__actions">
+        <button id="cancel-level-change-button" type="button">Cancel</button>
+        <button id="confirm-level-change-button" class="primary" type="button">Stop And Load</button>
+      </div>
+    </dialog>
+
     <script type="module" src="/src/host/main.ts"></script>
   </body>
 </html>
