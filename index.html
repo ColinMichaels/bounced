@@ -4,11 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bounced Host</title>
-    <script type="module" crossorigin src="/bounced/assets/host-Cgdy2Ilw.js"></script>
-    <link rel="modulepreload" crossorigin href="/bounced/assets/channel-DQ9E50J1.js">
-    <link rel="stylesheet" crossorigin href="/bounced/assets/channel-CIHVV6-1.css">
+    <script type="module" crossorigin src="/bounced/assets/host-avQjL22z.js"></script>
+    <link rel="modulepreload" crossorigin href="/bounced/assets/channel-C5qFaux-.js">
+    <link rel="stylesheet" crossorigin href="/bounced/assets/channel-DLAwtRyH.css">
   </head>
   <body class="host-shell">
+    <aside class="session-timer" aria-live="polite">
+      <div class="session-timer__card">
+        <span class="session-timer__label">Timer</span>
+        <strong id="timer-value">0:00.0</strong>
+      </div>
+    </aside>
+
     <main class="host-app">
       <section class="hero">
         <p class="eyebrow">BRIDGING TO VICTORY</p>
@@ -21,6 +28,7 @@
       <section class="control-panel">
         <div class="button-row">
           <button id="start-button" class="primary">Start Game</button>
+          <button id="utility-button" class="utility">Bridge Pulse</button>
           <button id="respawn-button">Reseed Target</button>
           <button id="stop-button">End Game</button>
         </div>
@@ -48,8 +56,28 @@
           <strong id="best-streak-value">0</strong>
         </article>
         <article>
+          <span class="label">Best Time</span>
+          <strong id="best-time-value">--:--.-</strong>
+        </article>
+        <article>
+          <span class="label">Medal</span>
+          <strong id="medal-value" data-tier="none">NONE</strong>
+        </article>
+        <article>
+          <span class="label">Medal Target</span>
+          <strong id="target-time-value">BRONZE 0:00.0</strong>
+        </article>
+        <article>
+          <span class="label">Pulse Charges</span>
+          <strong id="utility-charge-value">0</strong>
+        </article>
+        <article>
+          <span class="label">Utility</span>
+          <strong id="utility-state-value">OFFLINE</strong>
+        </article>
+        <article>
           <span class="label">Level</span>
-          <strong id="level-value">1 / 8</strong>
+          <strong id="level-value">1 / 100</strong>
         </article>
         <article>
           <span class="label">Playable Windows</span>
