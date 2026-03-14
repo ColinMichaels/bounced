@@ -23,6 +23,20 @@ interface ImpactFlash {
   variant: 'impact' | 'completion'
 }
 
+interface OverlapRect {
+  left: number
+  top: number
+  right: number
+  bottom: number
+  width: number
+  height: number
+}
+
+interface OverlappingRoom {
+  windowState: WindowBoundsPayload
+  overlap: OverlapRect
+}
+
 const TRAIL_MAX_POINTS = 22
 const TRAIL_DECAY_PER_FRAME = 0.055
 const TRAIL_MIN_STEP = 1.5
@@ -35,6 +49,13 @@ const IMPACT_MAX_FLASHES = 8
 const COMPLETION_RING_GROWTH = 24
 const SIDE_LOCK_INSET = 10
 const SIDE_LOCK_LINE_WIDTH = 7
+const XRAY_LOCK_LINE_WIDTH = 5
+const XRAY_ROOM_OUTLINE = 'rgba(128, 232, 255, 0.3)'
+const XRAY_ROOM_OUTLINE_GLOW = 'rgba(128, 232, 255, 0.14)'
+const XRAY_OBSTACLE_FILL = 'rgba(118, 236, 255, 0.08)'
+const XRAY_OBSTACLE_STROKE = 'rgba(168, 244, 255, 0.34)'
+const XRAY_LOCK_STROKE = 'rgba(132, 224, 255, 0.54)'
+const XRAY_LOCK_GLOW = 'rgba(132, 224, 255, 0.18)'
 
 export class BallRenderer {
   private readonly canvas: HTMLCanvasElement
@@ -84,6 +105,7 @@ export class BallRenderer {
     }
 
     this.drawImpactFlashes()
+    this.drawXRayOverlaps(snapshot, bounds)
     const obstacles = snapshot.obstacles.filter((obstacle) => obstacle.windowId === bounds.id && !obstacle.destroyed)
     this.drawObstacles(obstacles, bounds)
     this.drawBlockedEdges(routeWindow, bounds)
@@ -303,29 +325,155 @@ export class BallRenderer {
     this.context.restore()
   }
 
-  private drawBlockedEdges(routeWindow: RouteWindowState | null, bounds: WindowBoundsPayload): void {
+  private drawXRayOverlaps(snapshot: GameSnapshot, bounds: WindowBoundsPayload): void {
+    if (!document.hasFocus()) {
+      return
+    }
+
+    const currentRect = rectFromWindow(bounds)
+    const overlappingRooms: OverlappingRoom[] = []
+
+    for (const windowState of snapshot.windows) {
+      if (windowState.id === bounds.id || !snapshot.activeWindowIds.includes(windowState.id)) {
+        continue
+      }
+
+      const overlap = this.getOverlapRect(currentRect, rectFromWindow(windowState))
+      if (!overlap) {
+        continue
+      }
+
+      overlappingRooms.push({ windowState, overlap })
+    }
+
+    if (overlappingRooms.length === 0) {
+      return
+    }
+
+    for (const entry of overlappingRooms) {
+      const clipX = entry.overlap.left - bounds.contentX
+      const clipY = entry.overlap.top - bounds.contentY
+      const roomRoute = snapshot.routeWindows.find((windowState) => windowState.id === entry.windowState.id) ?? null
+      const roomObstacles = snapshot.obstacles.filter((obstacle) => obstacle.windowId === entry.windowState.id && !obstacle.destroyed)
+
+      this.context.save()
+      this.context.beginPath()
+      this.context.rect(clipX, clipY, entry.overlap.width, entry.overlap.height)
+      this.context.clip()
+
+      this.drawXRayRoomOutline(entry.windowState, bounds)
+      this.drawXRayObstacles(roomObstacles, bounds)
+      this.drawBlockedEdges(roomRoute, entry.windowState, {
+        strokeStyle: XRAY_LOCK_STROKE,
+        glowColor: XRAY_LOCK_GLOW,
+        lineWidth: XRAY_LOCK_LINE_WIDTH,
+        dashed: true,
+        markerAlpha: 0.72,
+        originX: entry.windowState.contentX - bounds.contentX,
+        originY: entry.windowState.contentY - bounds.contentY,
+      })
+
+      this.context.restore()
+    }
+  }
+
+  private drawXRayRoomOutline(windowState: WindowBoundsPayload, bounds: WindowBoundsPayload): void {
+    const localX = windowState.contentX - bounds.contentX
+    const localY = windowState.contentY - bounds.contentY
+
+    this.context.save()
+    this.context.strokeStyle = XRAY_ROOM_OUTLINE
+    this.context.lineWidth = 1.25
+    this.context.setLineDash([5, 7])
+    this.context.shadowBlur = 6
+    this.context.shadowColor = XRAY_ROOM_OUTLINE_GLOW
+    this.context.strokeRect(localX, localY, windowState.contentWidth, windowState.contentHeight)
+    this.context.restore()
+  }
+
+  private drawXRayObstacles(obstacles: ObstacleState[], bounds: WindowBoundsPayload): void {
+    if (obstacles.length === 0) {
+      return
+    }
+
+    this.context.save()
+
+    for (const obstacle of obstacles) {
+      const localX = obstacle.x - bounds.contentX
+      const localY = obstacle.y - bounds.contentY
+
+      this.context.beginPath()
+      this.context.fillStyle = XRAY_OBSTACLE_FILL
+      this.context.strokeStyle = XRAY_OBSTACLE_STROKE
+      this.context.lineWidth = 1.25
+      this.context.shadowBlur = 10
+      this.context.shadowColor = 'rgba(118, 236, 255, 0.1)'
+      this.context.roundRect(localX, localY, obstacle.width, obstacle.height, 10)
+      this.context.fill()
+      this.context.stroke()
+
+      this.context.shadowBlur = 0
+      this.context.save()
+      this.context.beginPath()
+      this.context.roundRect(localX, localY, obstacle.width, obstacle.height, 10)
+      this.context.clip()
+      this.context.strokeStyle = 'rgba(168, 244, 255, 0.18)'
+      this.context.lineWidth = 1.5
+
+      for (let stripeX = localX - obstacle.height; stripeX < localX + obstacle.width + obstacle.height; stripeX += 12) {
+        this.context.beginPath()
+        this.context.moveTo(stripeX, localY + obstacle.height)
+        this.context.lineTo(stripeX + obstacle.height, localY)
+        this.context.stroke()
+      }
+
+      this.context.restore()
+    }
+
+    this.context.restore()
+  }
+
+  private drawBlockedEdges(
+    routeWindow: RouteWindowState | null,
+    bounds: WindowBoundsPayload,
+    style?: {
+      strokeStyle: string
+      glowColor: string
+      lineWidth: number
+      dashed: boolean
+      markerAlpha: number
+      originX: number
+      originY: number
+    },
+  ): void {
     if (!routeWindow || routeWindow.blockedEdges.length === 0) {
       return
     }
 
     const width = bounds.contentWidth
     const height = bounds.contentHeight
+    const originX = style?.originX ?? 0
+    const originY = style?.originY ?? 0
     const isSuppressed = routeWindow.blockedEdgesSuppressed
-    const edgeColor = isSuppressed
-      ? 'rgba(108, 239, 255, 0.82)'
-      : routeWindow.role === 'goal'
-        ? 'rgba(255, 198, 118, 0.92)'
-        : 'rgba(255, 124, 114, 0.92)'
-    const glowColor = isSuppressed
-      ? 'rgba(108, 239, 255, 0.22)'
-      : routeWindow.role === 'goal'
-        ? 'rgba(255, 198, 118, 0.26)'
-        : 'rgba(255, 124, 114, 0.24)'
+    const edgeColor = style?.strokeStyle ?? (
+      isSuppressed
+        ? 'rgba(108, 239, 255, 0.82)'
+        : routeWindow.role === 'goal'
+          ? 'rgba(255, 198, 118, 0.92)'
+          : 'rgba(255, 124, 114, 0.92)'
+    )
+    const glowColor = style?.glowColor ?? (
+      isSuppressed
+        ? 'rgba(108, 239, 255, 0.22)'
+        : routeWindow.role === 'goal'
+          ? 'rgba(255, 198, 118, 0.26)'
+          : 'rgba(255, 124, 114, 0.24)'
+    )
 
     this.context.save()
     this.context.lineCap = 'round'
-    this.context.lineWidth = SIDE_LOCK_LINE_WIDTH
-    this.context.setLineDash(isSuppressed ? [8, 10] : [14, 8])
+    this.context.lineWidth = style?.lineWidth ?? SIDE_LOCK_LINE_WIDTH
+    this.context.setLineDash(style?.dashed ? [8, 10] : isSuppressed ? [8, 10] : [14, 8])
     this.context.strokeStyle = edgeColor
     this.context.shadowBlur = 16
     this.context.shadowColor = glowColor
@@ -334,17 +482,17 @@ export class BallRenderer {
       this.context.beginPath()
 
       if (edge === 'left') {
-        this.context.moveTo(SIDE_LOCK_INSET, SIDE_LOCK_INSET)
-        this.context.lineTo(SIDE_LOCK_INSET, height - SIDE_LOCK_INSET)
+        this.context.moveTo(originX + SIDE_LOCK_INSET, originY + SIDE_LOCK_INSET)
+        this.context.lineTo(originX + SIDE_LOCK_INSET, originY + height - SIDE_LOCK_INSET)
       } else if (edge === 'right') {
-        this.context.moveTo(width - SIDE_LOCK_INSET, SIDE_LOCK_INSET)
-        this.context.lineTo(width - SIDE_LOCK_INSET, height - SIDE_LOCK_INSET)
+        this.context.moveTo(originX + width - SIDE_LOCK_INSET, originY + SIDE_LOCK_INSET)
+        this.context.lineTo(originX + width - SIDE_LOCK_INSET, originY + height - SIDE_LOCK_INSET)
       } else if (edge === 'up') {
-        this.context.moveTo(SIDE_LOCK_INSET, SIDE_LOCK_INSET)
-        this.context.lineTo(width - SIDE_LOCK_INSET, SIDE_LOCK_INSET)
+        this.context.moveTo(originX + SIDE_LOCK_INSET, originY + SIDE_LOCK_INSET)
+        this.context.lineTo(originX + width - SIDE_LOCK_INSET, originY + SIDE_LOCK_INSET)
       } else {
-        this.context.moveTo(SIDE_LOCK_INSET, height - SIDE_LOCK_INSET)
-        this.context.lineTo(width - SIDE_LOCK_INSET, height - SIDE_LOCK_INSET)
+        this.context.moveTo(originX + SIDE_LOCK_INSET, originY + height - SIDE_LOCK_INSET)
+        this.context.lineTo(originX + width - SIDE_LOCK_INSET, originY + height - SIDE_LOCK_INSET)
       }
 
       this.context.stroke()
@@ -356,11 +504,13 @@ export class BallRenderer {
 
     for (const edge of routeWindow.blockedEdges) {
       if (edge === 'left' || edge === 'right') {
-        const markerX = edge === 'left' ? SIDE_LOCK_INSET : width - SIDE_LOCK_INSET
-        this.context.fillRect(markerX - 2, (height / 2) - 16, 4, 32)
+        const markerX = originX + (edge === 'left' ? SIDE_LOCK_INSET : width - SIDE_LOCK_INSET)
+        this.context.globalAlpha = style?.markerAlpha ?? 1
+        this.context.fillRect(markerX - 2, originY + (height / 2) - 16, 4, 32)
       } else {
-        const markerY = edge === 'up' ? SIDE_LOCK_INSET : height - SIDE_LOCK_INSET
-        this.context.fillRect((width / 2) - 16, markerY - 2, 32, 4)
+        const markerY = originY + (edge === 'up' ? SIDE_LOCK_INSET : height - SIDE_LOCK_INSET)
+        this.context.globalAlpha = style?.markerAlpha ?? 1
+        this.context.fillRect(originX + (width / 2) - 16, markerY - 2, 32, 4)
       }
     }
 
@@ -804,5 +954,30 @@ export class BallRenderer {
     }
 
     return 'rgba(115, 150, 176, 0.07)'
+  }
+
+  private getOverlapRect(
+    left: ReturnType<typeof rectFromWindow>,
+    right: ReturnType<typeof rectFromWindow>,
+  ): OverlapRect | null {
+    const overlapLeft = Math.max(left.left, right.left)
+    const overlapTop = Math.max(left.top, right.top)
+    const overlapRight = Math.min(left.right, right.right)
+    const overlapBottom = Math.min(left.bottom, right.bottom)
+    const overlapWidth = overlapRight - overlapLeft
+    const overlapHeight = overlapBottom - overlapTop
+
+    if (overlapWidth <= 0 || overlapHeight <= 0) {
+      return null
+    }
+
+    return {
+      left: overlapLeft,
+      top: overlapTop,
+      right: overlapRight,
+      bottom: overlapBottom,
+      width: overlapWidth,
+      height: overlapHeight,
+    }
   }
 }

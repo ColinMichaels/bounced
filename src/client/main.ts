@@ -43,6 +43,7 @@ const canvasFrame = must<HTMLElement>('canvas-frame')
 const DRAW_FRAME_INTERVAL_MS = 1000 / 30
 const WINDOW_SIZE_SYNC_MAX_ATTEMPTS = 6
 const VIEWPORT_SETTLE_TOLERANCE_PX = 14
+const MOTION_POLL_MS = 50
 
 titleElement.textContent = roomLabel
 document.title = title
@@ -66,6 +67,7 @@ let lockedLayoutKey: string | null = null
 let pendingLayoutKey: string | null = null
 let drawFrameId = 0
 let lastDrawAt = 0
+let lastMotionSignature = ''
 
 channel.post({
   type: 'register_window',
@@ -85,6 +87,7 @@ channel.post({
 reportBounds()
 window.requestAnimationFrame(reportBounds)
 const heartbeat = window.setInterval(reportBounds, BOUNDS_HEARTBEAT_MS)
+const motionPoll = window.setInterval(pollWindowMotion, MOTION_POLL_MS)
 
 window.addEventListener('pointerdown', handlePointerDown, { capture: true })
 window.addEventListener('resize', reportBounds)
@@ -95,6 +98,7 @@ resizeObserver.observe(canvasFrame)
 
 window.addEventListener('beforeunload', () => {
   window.clearInterval(heartbeat)
+  window.clearInterval(motionPoll)
   resizeObserver.disconnect()
   channel.post({
     type: 'unregister_window',
@@ -133,11 +137,21 @@ function handleMessage(message: GameMessage): void {
 
 function reportBounds(): void {
   bounds = measureWindow()
+  lastMotionSignature = getMotionSignature()
   channel.post({
     type: 'window_bounds',
     payload: bounds,
   })
   scheduleDraw()
+}
+
+function pollWindowMotion(): void {
+  const nextSignature = getMotionSignature()
+  if (nextSignature === lastMotionSignature) {
+    return
+  }
+
+  reportBounds()
 }
 
 function requestClusterRecall(): void {
@@ -406,6 +420,16 @@ function measureWindow(): WindowBoundsPayload {
     contentHeight: pendingLayoutKey ? 0 : canvasRect.height,
     visible: !document.hidden,
   }
+}
+
+function getMotionSignature(): string {
+  return [
+    Math.round(window.screenX),
+    Math.round(window.screenY),
+    Math.round(window.outerWidth),
+    Math.round(window.outerHeight),
+    document.hidden ? 1 : 0,
+  ].join(':')
 }
 
 function measureChromeInsets(): ChromeInsets {
