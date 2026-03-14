@@ -14,72 +14,74 @@ Implemented now:
 - static barrier obstacles in relay / goal rooms
 - generated blocked room-side locks
 - click-to-shoot barrier clearing
-- optional score nodes in cleared relay rooms
+- relay-room score nodes
+- ambient room bonuses for score, charges, and time reduction
 - campaign unlock flow across 100 generated levels
 - generated clear-time medals with persistent best ranks
 - bridge-pulse helper utility with spendable run charges
-- synthesized room-local audio feedback
+- host-side synthesized audio feedback
+- focused-room xray overlays for overlapped hidden structure
+- guarded level-switch confirmation during active runs
 - compact host and popup UI
 
 Not implemented yet:
 
-- upgrades / abilities
+- a second helper ability beyond bridge pulse
+- deeper spendable upgrade economy
 - decoys / multiple active balls as a real mode
 
 ## Near-Term TODO
 
-### 1. Obstacle clearing and room control
+### 1. Second helper utility
 
 Goal:
 
-- turn the new room barriers into a gameplay system players can actively clear
-- force the player to do more than only move windows
+- add a second utility that solves a different problem than bridge pulse
 
 Current state:
 
-- barriers now exist as authoritative snapshot objects
-- barriers are rendered in relay / goal rooms
-- barriers now act as internal collision geometry for the ball
+- bridge pulse is the only spendable active utility
+- bonuses and medal gains can already feed utility charges
 
 Next shape:
 
-- let player actions destroy or disable barriers
-- track per-barrier durability / cleared state over time
-- gate route or score events on room-clearing state
+- add one new tactical button with a different problem-space
+- examples: short slow-time, quick route ping, or obstacle burst
+- keep it run-local and charge-based like bridge pulse
 
-### 2. Shooting mechanic
-
-Goal:
-
-- deepen the now-working shot mechanic with pacing and strategy
-
-Current state:
-
-- popup room clicks now destroy barriers
-- room objectives stay live while barriers remain physical blockers
-
-Planned shape:
-
-- add cooldown, shot feedback, and destruction effects
-- add richer barrier durability patterns
-- add upgrades or alternate shot behaviors
-
-### 3. Score / upgrade targets
+### 2. Upgrade and reward economy
 
 Goal:
 
-- reward room clearing before the level-end goal
+- make bonus pickups, medals, and utilities feel like a connected reward system
 
 Current state:
 
-- the active relay room now spawns an optional score node once its barriers are cleared
-- routing the ball through that node grants score without replacing relay completion
+- ambient bonuses can award score, time, or bridge-pulse charges
+- medal improvements already award score and extra charges
 
 Planned shape:
 
-- after blockers in a room or path are cleared, spawn a score target
-- hitting that target awards points, charges, or upgrades
-- final goal remains the level-completion condition
+- add more spendable run resources or unlock-style perks
+- make reward choices matter more than raw score gain
+- decide whether some rewards should be player-choice based instead of fixed
+
+### 3. Xray and overlap readability
+
+Goal:
+
+- extend the new overlap-xray system without cluttering the rooms
+
+Current state:
+
+- focused rooms can ghost-render hidden barriers and side locks from overlapped rooms
+- the effect is structural only and does not change gameplay state
+
+Planned shape:
+
+- decide whether relay / goal markers should also ghost-render
+- tune contrast and responsiveness without bringing back render lag
+- keep xray visuals restricted to the focused top room unless a better z-order heuristic appears
 
 ### 4. Time medals and run pacing
 

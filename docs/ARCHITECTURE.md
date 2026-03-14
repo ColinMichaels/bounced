@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ball Hunt is a same-origin multi-window game. One host window owns the authoritative game state, while popup rooms render local views of that state and report their live desktop geometry back to the host.
+Bounced is a same-origin multi-window game. One host window owns the authoritative game state, while popup rooms render local views of that state and report their live desktop geometry back to the host.
 
 The runtime is fully client-side:
 
@@ -41,13 +41,16 @@ Files:
 - [src/host/main.ts](/Users/colin/Projects/bouced/src/host/main.ts)
 - [src/host/windowManager.ts](/Users/colin/Projects/bouced/src/host/windowManager.ts)
 - [src/host/ticker.worker.ts](/Users/colin/Projects/bouced/src/host/ticker.worker.ts)
+- [src/host/audio.ts](/Users/colin/Projects/bouced/src/host/audio.ts)
 
 Responsibilities:
 
 - create and relayout popup rooms for the selected level
 - keep the engine ticking even while popup rooms are focused
 - render host-side progression and status UI
+- own synthesized run audio feedback
 - recall/focus the popup cluster
+- guard live level switches with a confirmation dialog
 - wait for fresh room bounds after layout changes
 
 ### Engine
@@ -75,17 +78,17 @@ Files:
 
 - [src/client/main.ts](/Users/colin/Projects/bouced/src/client/main.ts)
 - [src/client/renderer.ts](/Users/colin/Projects/bouced/src/client/renderer.ts)
-- [src/client/audio.ts](/Users/colin/Projects/bouced/src/client/audio.ts)
 
 Responsibilities:
 
 - measure playable canvas geometry in screen coordinates
 - publish bounds over `BroadcastChannel`
+- publish faster motion-driven bounds updates while a room is being dragged
 - render the room-local slice of the shared simulation
 - display compact room number and route status
 - forward click input as room shots
 - render barriers, route targets, bonus pickups, and side locks
-- synthesize room-local audio feedback for impacts and completions
+- render focused-room xray overlays for overlapped hidden structure
 - reflect active utility states like bridge-pulse lock suppression
 
 ### Shared Protocol
@@ -135,6 +138,7 @@ The host worker ticker sends periodic tick events into the host UI. On each tick
 - room-side locks can reject otherwise touching room connections
 - relay / goal room barriers are applied as internal collision geometry
 - optional relay-room score pickups are derived from the current room state
+- ambient non-start-room bonuses are derived from the level bonus profile
 - medal pace is evaluated from generated per-level clear-time thresholds
 - active bridge-pulse utility can temporarily suppress side locks
 - relay / goal collisions are tested
@@ -178,6 +182,7 @@ Rules:
 - higher levels can assign blocked edges to active rooms
 - barriers can be destroyed via room clicks
 - bonus pickups and stronger medal clears can award bridge-pulse charges
+- ambient room bonuses can award score, charges, or time reductions
 - bridge pulse temporarily suppresses room-side locks for the active run
 - only one relay target is active at a time
 - the goal target stays locked until all relays are completed
@@ -214,11 +219,13 @@ Current messages:
 - `catch_attempt`
 - `request_sync`
 - `focus_windows`
+- `layout_hint`
 - `snapshot`
 
 Notes:
 
 - `catch_attempt` is the room-shot input path used for barrier clearing
+- `layout_hint` carries authoritative content-size targets from the host to popup rooms
 - `snapshot` is the host's full authoritative state broadcast
 - `focus_windows` is used for room-cluster recall behavior
 
@@ -240,6 +247,7 @@ Popup rooms stay minimal:
 - room number in the header
 - compact route status in the header
 - playfield-only canvas below
+- optional xray overlays when one active room overlaps another
 
 The room chrome is intentionally small so the popup area is mostly playable surface.
 
