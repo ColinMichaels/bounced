@@ -9,6 +9,7 @@ interface HostHarness {
   forceLevelComplete: () => boolean
   attemptActiveTargetHit: () => boolean
   coverActiveTarget: () => boolean
+  resolveContainingWindowId: (x: number, y: number, preferredWindowId: string | null) => string | null
   closeWindow: (id: string) => boolean
   setFrontWindow: (id: string | null) => void
   pauseForDeckFocus: () => void
@@ -119,6 +120,22 @@ async function coverActiveTarget(page: Page): Promise<boolean> {
 
     return harness.coverActiveTarget()
   })
+}
+
+async function resolveContainingWindowId(
+  page: Page,
+  x: number,
+  y: number,
+  preferredWindowId: string | null,
+): Promise<string | null> {
+  return page.evaluate(({ x: pointX, y: pointY, preferredWindowId: preferredId }) => {
+    const harness = (window as Window & { __BOUNCED_TEST__?: HostHarness }).__BOUNCED_TEST__
+    if (!harness) {
+      throw new Error('Missing host test harness.')
+    }
+
+    return harness.resolveContainingWindowId(pointX, pointY, preferredId)
+  }, { x, y, preferredWindowId })
 }
 
 async function setFrontWindow(page: Page, windowId: string | null): Promise<void> {
@@ -393,6 +410,40 @@ test('hidden relay and goal objectives do not score while covered in overlap sta
   expect(await attemptActiveTargetHit(host)).toBe(true)
   await expect.poll(() => getPhase(host)).toBe('summary')
   await expect.poll(() => host.evaluate(() => !!window.__BOUNCED_TEST__?.getSummaryOpen())).toBe(true)
+
+  await context.close()
+})
+
+test('stacked overlap ownership follows the front room instead of the xray room beneath it', async ({ browser }) => {
+  const context = await browser.newContext()
+  const host = await context.newPage()
+
+  await gotoHost(host)
+  await startGame(host)
+  await pauseForDeckFocus(host)
+  await expect.poll(() => getPhase(host)).toBe('paused')
+
+  let snapshot = await getSnapshot(host)
+  const targetWindowId = snapshot.activeTarget?.windowId ?? null
+  const coverWindowId = snapshot.activeWindowIds.find((id) => id !== targetWindowId) ?? null
+
+  expect(targetWindowId).toBeTruthy()
+  expect(coverWindowId).toBeTruthy()
+  expect(await coverActiveTarget(host)).toBe(true)
+
+  snapshot = await getSnapshot(host)
+  const overlapTarget = snapshot.activeTarget
+  expect(overlapTarget).toBeTruthy()
+
+  await setFrontWindow(host, coverWindowId)
+  await expect
+    .poll(() => resolveContainingWindowId(host, overlapTarget!.x, overlapTarget!.y, targetWindowId))
+    .toBe(coverWindowId)
+
+  await setFrontWindow(host, targetWindowId)
+  await expect
+    .poll(() => resolveContainingWindowId(host, overlapTarget!.x, overlapTarget!.y, coverWindowId))
+    .toBe(targetWindowId)
 
   await context.close()
 })

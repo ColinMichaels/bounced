@@ -1,5 +1,5 @@
 import { MAX_DELTA_MS, SHOT_COOLDOWN_MS, SHOT_HIT_PADDING_PX, WINDOW_STALE_MS } from '../shared/constants'
-import { clamp, findContainingWindow, getConnectedWindows, pointInCircle, pointInRect, rectFromWindow, sortWindowsBySlot } from '../shared/geometry'
+import { clamp, getConnectedWindows, pointInCircle, pointInRect, rectFromWindow, sortWindowsBySlot } from '../shared/geometry'
 import type { GameChannel } from '../network/channel'
 import {
   compareMedalTiers,
@@ -341,6 +341,18 @@ export class GameEngine {
 
     this.handleRouteHit(activeWindows, activeTarget, difficulty, now)
     return true
+  }
+
+  debugResolveContainingWindowId(
+    x: number,
+    y: number,
+    preferredWindowId: string | null = null,
+  ): string | null {
+    const difficulty = getDifficultyForLevel(this.currentLevel)
+    const activeWindows = this.getActiveWindows(difficulty.activeWindows)
+    const candidateWindows = activeWindows.length > 0 ? activeWindows : this.getPlayableWindows()
+
+    return this.findContainingWindowForPhysics(candidateWindows, x, y, preferredWindowId)?.id ?? null
   }
 
   restoreProgress(state: PlayerProgressState | null): void {
@@ -814,7 +826,7 @@ export class GameEngine {
     const deltaMs = Math.min(MAX_DELTA_MS, Math.max(0, now - this.lastStepAt))
     this.lastStepAt = now
     this.balls = this.balls.map((ball) => {
-      const seedWindow = findContainingWindow(activeWindows, ball.x, ball.y)
+      const seedWindow = this.findContainingWindowForPhysics(activeWindows, ball.x, ball.y, ball.ownerWindowId)
         ?? activeWindows.find((windowState) => windowState.id === ball.ownerWindowId)
         ?? activeWindows[0]
       const motionWindows = getConnectedWindows(activeWindows, seedWindow.id, this.getEffectiveBlockedEdges(now))
@@ -833,7 +845,7 @@ export class GameEngine {
 
       return {
         ...advancedBall,
-        ownerWindowId: findContainingWindow(motionWindows, advancedBall.x, advancedBall.y)?.id ?? seedWindow.id,
+        ownerWindowId: this.findContainingWindowForPhysics(motionWindows, advancedBall.x, advancedBall.y, seedWindow.id)?.id ?? seedWindow.id,
       }
     })
     this.tick += 1
@@ -2009,6 +2021,39 @@ export class GameEngine {
 
   private getWindowFocusRank(windowId: string): number {
     return this.windowFocusOrder.get(windowId) ?? 0
+  }
+
+  private findContainingWindowForPhysics(
+    windows: WindowState[],
+    x: number,
+    y: number,
+    preferredWindowId: string | null = null,
+  ): WindowState | null {
+    const containingWindows = windows.filter((windowState) => pointInRect(x, y, rectFromWindow(windowState)))
+    if (containingWindows.length === 0) {
+      return null
+    }
+
+    if (containingWindows.length === 1) {
+      return containingWindows[0]
+    }
+
+    let bestWindow = containingWindows[0]
+    let bestRank = this.getWindowFocusRank(bestWindow.id)
+
+    for (const windowState of containingWindows.slice(1)) {
+      const rank = this.getWindowFocusRank(windowState.id)
+      if (rank > bestRank || (rank === bestRank && windowState.id === preferredWindowId)) {
+        bestWindow = windowState
+        bestRank = rank
+      }
+    }
+
+    if (bestRank > 0) {
+      return bestWindow
+    }
+
+    return containingWindows.find((windowState) => windowState.id === preferredWindowId) ?? containingWindows[0]
   }
 
   private emitSnapshot(): void {
