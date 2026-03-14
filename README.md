@@ -29,6 +29,8 @@ The level only clears when the ball touches:
 
 You cannot skip ahead.
 
+You also cannot score what you cannot see. If a relay or goal is covered by another room that is still above it in the current overlap stack, the ball touching that hidden target will not count until the target room is visible again.
+
 ## First Run
 
 1. Click `Start Game`.
@@ -88,7 +90,7 @@ When you clear the current active relay room, it can spawn a temporary relay bon
 If the ball touches it:
 
 - you get bonus score
-- you get a `Bridge Pulse` charge
+- you get a utility charge
 
 If the ball leaves that relay room first, the bonus is gone.
 
@@ -99,14 +101,16 @@ Later levels can also place extra bonuses in non-start rooms.
 These can reward:
 
 - score
-- a `Bridge Pulse` charge
+- a utility charge
 - a small time reduction
 
 These are optional. They help, but the route objective always comes first.
 
-## Bridge Pulse
+## Utilities
 
-`Bridge Pulse` is a run utility earned from strong play.
+Utility charges are shared across active helper abilities.
+
+### Bridge Pulse
 
 When you spend one charge:
 
@@ -121,6 +125,20 @@ Worst use:
 
 - spending it before you have a real route ready
 
+### Time Brake
+
+`Time Brake` spends one shared utility charge to slow the live ball for a short burst.
+
+Best use:
+
+- when the route is almost ready but the ball is arriving too fast
+- when a late-level bounce pattern needs one calm correction window
+
+Worst use:
+
+- spending it when the route is still fundamentally wrong
+- using it too early, before the ball reaches the dangerous part of the layout
+
 ## Medals And Time
 
 Every level is also a time trial.
@@ -131,7 +149,7 @@ You can earn:
 - `Silver`
 - `Gold`
 
-The control deck tracks your current timer, best time, and best medal for the selected level. Better clears can award extra score and more pulse charges.
+The control deck tracks your current timer, best time, and best medal for the selected level. Better clears can award extra score and more utility charges.
 
 If you just want to survive a level, build safe routes.
 
@@ -148,11 +166,14 @@ Right now the xray view shows:
 
 This is visual only. It does not change physics, scoring, or input. It is there to help you read the space better when rooms stack.
 
+That means xray helps you inspect hidden structure, but it does not let you clear hidden relays or goals through a covered room.
+
 ## Control Deck Commands
 
 - `Start Game`: opens or relayouts the required rooms and starts the run
 - `Resume Game`: recalls the room cluster and resumes play if the control deck paused the session
-- `Bridge Pulse`: spends one pulse charge
+- `Bridge Pulse`: spends one utility charge to suppress side locks
+- `Time Brake`: spends one utility charge to slow the signal briefly
 - `Reseed Target`: respawns the route target and ball for the current level
 - `End Session`: closes the active room set and ends the run
 
@@ -177,7 +198,8 @@ The current playable build includes:
 - relay bonuses and ambient bonuses
 - best-time and medal tracking
 - persistent local progress
-- `Bridge Pulse` utility charges
+- shared utility charges
+- `Bridge Pulse` and `Time Brake`
 - host-side synthesized audio
 - focused-room xray rendering for overlap readability
 
@@ -185,6 +207,7 @@ The current playable build includes:
 
 - [docs/HOW_TO_PLAY.md](/Users/colin/Projects/bouced/docs/HOW_TO_PLAY.md)
 - [docs/STRATEGY_GUIDE.md](/Users/colin/Projects/bouced/docs/STRATEGY_GUIDE.md)
+- [docs/PLAYTEST_CHECKLIST.md](/Users/colin/Projects/bouced/docs/PLAYTEST_CHECKLIST.md)
 
 ## Developer
 
@@ -202,6 +225,7 @@ npm run check
 npm run build
 npm run build:pages
 npm run preview:pages
+npm run test:smoke
 ```
 
 ### GitHub Pages

@@ -91,7 +91,10 @@ const motionPoll = window.setInterval(pollWindowMotion, MOTION_POLL_MS)
 
 window.addEventListener('pointerdown', handlePointerDown, { capture: true })
 window.addEventListener('resize', reportBounds)
-window.addEventListener('focus', reportBounds)
+window.addEventListener('focus', () => {
+  announceWindowFocus()
+  reportBounds()
+})
 document.addEventListener('visibilitychange', reportBounds)
 canvas.addEventListener('click', handleCanvasClick)
 resizeObserver.observe(canvasFrame)
@@ -151,6 +154,10 @@ function pollWindowMotion(): void {
     return
   }
 
+  if (document.visibilityState === 'visible' && document.hasFocus()) {
+    announceWindowFocus()
+  }
+
   reportBounds()
 }
 
@@ -165,6 +172,15 @@ function requestClusterRecall(): void {
 
 function handlePointerDown(): void {
   requestClusterRecall()
+}
+
+function announceWindowFocus(): void {
+  channel.post({
+    type: 'window_focus',
+    payload: {
+      id: windowId,
+    },
+  })
 }
 
 function scheduleDraw(): void {
@@ -492,7 +508,7 @@ function getStatusText(snapshot: GameSnapshot, bounds: WindowBoundsPayload | nul
   const roomBonusCount = snapshot.ambientBonuses.filter((bonus) => bonus.windowId === bounds.id).length
     + (snapshot.activeScoreNode?.windowId === bounds.id ? 1 : 0)
   const sideLockCount = routeWindow.blockedEdges.length
-  const utilitySuffix = snapshot.activeUtility ? ' · PULSE' : ''
+  const utilitySuffix = snapshot.activeUtility ? ` · ${snapshot.activeUtility.shortLabel}` : ''
   const barrierSuffix = liveObstacleCount > 0
     ? ` · ${liveObstacleCount} BARRIER${liveObstacleCount === 1 ? '' : 'S'}`
     : ''

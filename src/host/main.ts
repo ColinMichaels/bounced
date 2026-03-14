@@ -17,6 +17,7 @@ import { WindowManager } from './windowManager'
 
 const startButton = must<HTMLButtonElement>('start-button')
 const utilityButton = must<HTMLButtonElement>('utility-button')
+const timeBrakeButton = must<HTMLButtonElement>('time-brake-button')
 const respawnButton = must<HTMLButtonElement>('respawn-button')
 const stopButton = must<HTMLButtonElement>('stop-button')
 const popupWarning = must<HTMLParagraphElement>('popup-warning')
@@ -60,6 +61,24 @@ const POPUP_ACCESS_STORAGE_KEY = 'bounced-popup-access'
 
 type PopupAccessState = 'unknown' | 'allowed' | 'blocked'
 
+interface BouncedTestHarness {
+  getSnapshot: () => GameSnapshot
+  getOpenWindowIds: () => string[]
+  getSummaryOpen: () => boolean
+  getAudioState: () => string
+  forceLevelComplete: () => boolean
+  attemptActiveTargetHit: () => boolean
+  coverActiveTarget: () => boolean
+  closeWindow: (id: string) => boolean
+  setFrontWindow: (id: string | null) => void
+}
+
+declare global {
+  interface Window {
+    __BOUNCED_TEST__?: BouncedTestHarness
+  }
+}
+
 let hasStarted = false
 let readinessWarning = ''
 let followWindows = true
@@ -82,6 +101,7 @@ let lastSummaryKey = ''
 engine.restoreProgress(progressStorage.load())
 engine.subscribe(handleEngineSnapshot)
 renderPopupWarning()
+installTestHarness()
 
 window.addEventListener('focus', () => {
   updateHostFocusState(true)
@@ -191,6 +211,11 @@ utilityButton.addEventListener('click', () => {
   engine.activateBridgePulse(Date.now())
 })
 
+timeBrakeButton.addEventListener('click', () => {
+  audio.unlock()
+  engine.activateTimeBrake(Date.now())
+})
+
 stopButton.addEventListener('click', () => {
   audio.unlock()
   stopActiveSession()
@@ -223,7 +248,12 @@ function armSession(level: number): boolean {
   lastFollowAt = 0
   awaitingFreshBoundsSince = Date.now()
   syncDeckPresentation()
-  windowManager.recallAll()
+  audio.resume()
+  const initialFrontHandle = [...handles]
+    .filter((handle) => handle.ref && !handle.ref.closed)
+    .sort((left, right) => left.slot - right.slot)
+    .at(-1)
+  recallWindowCluster(initialFrontHandle?.id ?? null)
   renderWarnings()
   return true
 }
@@ -312,7 +342,15 @@ function handleMessage(message: GameMessage): void {
       }
 
       followWindows = true
-      windowManager.recallAll(message.payload.preferredId)
+      recallWindowCluster(message.payload.preferredId)
+      break
+    case 'window_focus':
+      if (pausedForDeckFocus) {
+        resumeGameplay(message.payload.id)
+        break
+      }
+
+      engine.setFrontWindowId(message.payload.id)
       break
     case 'summary_action':
       handleSummaryAction(message.payload.action)
@@ -337,6 +375,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     pausedForDeckFocus = false
     desiredWindowCount = 0
     followWindows = true
+    engine.setFrontWindowId(null)
     lastFocusedOwnerId = null
     lastFollowAt = 0
     lastLayoutKey = ''
@@ -356,7 +395,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     lastFocusedOwnerId = null
     const handles = windowManager.ensureWindowPool(desiredWindowCount, snapshot.selectedLevel, { relayout: true })
     sendLayoutHints(handles)
-    windowManager.recallAll()
+    recallWindowCluster(null)
     awaitingFreshBoundsSince = Date.now()
 
     if (windowManager.getOpenCount() < desiredWindowCount) {
@@ -381,9 +420,14 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   levelValue.textContent = `${snapshot.selectedLevel} / ${MAX_LEVEL}`
   windowCountValue.textContent = `${snapshot.availableWindowCount} / ${snapshot.requiredWindowCount}`
   startButton.textContent = hasStarted && windowManager.getOpenCount() > 0 ? 'Resume Game' : 'Start Game'
-  utilityButton.textContent = snapshot.activeUtility ? 'Bridge Pulse Live' : 'Bridge Pulse'
+  utilityButton.textContent = snapshot.activeUtility?.kind === 'bridge_pulse' ? 'Bridge Pulse Live' : 'Bridge Pulse'
+  timeBrakeButton.textContent = snapshot.activeUtility?.kind === 'time_brake' ? 'Time Brake Live' : 'Time Brake'
   respawnButton.disabled = !hasStarted || snapshot.phase === 'paused'
   utilityButton.disabled = !hasStarted
+    || snapshot.phase !== 'running'
+    || snapshot.utilityCharges <= 0
+    || snapshot.activeUtility !== null
+  timeBrakeButton.disabled = !hasStarted
     || snapshot.phase !== 'running'
     || snapshot.utilityCharges <= 0
     || snapshot.activeUtility !== null
@@ -401,7 +445,7 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     `Barriers: ${liveObstacles.length}.`,
     `Bonuses live: ${snapshot.ambientBonuses.length + (snapshot.activeScoreNode ? 1 : 0)}.`,
     `Goal window: ${goalWindowTitle}.`,
-    `Pulse charges: ${snapshot.utilityCharges}.`,
+    `Utility charges: ${snapshot.utilityCharges}.`,
     snapshot.activeUtility ? `Utility live: ${formatDurationMs(snapshot.activeUtility.remainingMs)} remaining.` : 'Utility ready when a charge is available.',
     `Unlocked levels: 1-${snapshot.maxUnlockedLevel}.`,
     `${snapshot.completedLevels.length} of ${MAX_LEVEL} levels cleared.`,
@@ -589,6 +633,7 @@ function stopActiveSession(prefix = 'Session ended.'): void {
   lastFollowAt = 0
   lastLayoutKey = ''
   awaitingFreshBoundsSince = 0
+  engine.setFrontWindowId(null)
   windowManager.closeAll()
   audio.pause()
   engine.endGame(prefix)
@@ -633,7 +678,7 @@ function syncWindowFollow(snapshot: GameSnapshot): void {
     return
   }
 
-  windowManager.recallAll(ownerId)
+  recallWindowCluster(ownerId)
 
   lastFocusedOwnerId = ownerId
   lastFollowAt = now
@@ -656,8 +701,32 @@ function resumeGameplay(preferredId?: string | null): void {
   followWindows = true
   lastFocusedOwnerId = null
   lastFollowAt = 0
-  windowManager.recallAll(nextPreferredId)
+  recallWindowCluster(nextPreferredId)
   syncDeckPresentation()
+}
+
+function recallWindowCluster(preferredId: string | null): void {
+  const recallOrder = buildRecallOrder(preferredId)
+  if (recallOrder.length > 0) {
+    engine.setWindowFocusStack(recallOrder)
+  } else {
+    engine.setFrontWindowId(null)
+  }
+
+  windowManager.recallAll(preferredId)
+}
+
+function buildRecallOrder(preferredId: string | null): string[] {
+  const orderedIds = windowManager.getOpenHandles()
+    .map((handle) => handle.id)
+    .filter((id) => id !== preferredId)
+
+  const preferredHandle = preferredId ? windowManager.getHandle(preferredId) : null
+  if (preferredId && preferredHandle?.ref && !preferredHandle.ref.closed) {
+    orderedIds.push(preferredId)
+  }
+
+  return orderedIds
 }
 
 function sendLayoutHints(handles: ReturnType<WindowManager['ensureWindowPool']>): void {
@@ -715,6 +784,7 @@ function abortSessionDueToClosedWindow(windowId: string): void {
   lastFollowAt = 0
   lastLayoutKey = ''
   awaitingFreshBoundsSince = 0
+  engine.setFrontWindowId(null)
   windowManager.closeAll()
   audio.pause()
   engine.endGame(`${closedWindowTitle} was closed during play.`)
@@ -756,6 +826,67 @@ function pauseForControlDeck(): void {
 
 function renderPopupWarning(): void {
   popupWarning.hidden = popupAccessState === 'allowed'
+}
+
+function installTestHarness(): void {
+  if (!isTestHarnessEnabled()) {
+    delete window.__BOUNCED_TEST__
+    return
+  }
+
+  window.__BOUNCED_TEST__ = {
+    getSnapshot: () => engine.getSnapshot(),
+    getOpenWindowIds: () => windowManager.getOpenHandles().map((handle) => handle.id),
+    getSummaryOpen: () => !!summaryWindowRef && !summaryWindowRef.closed,
+    getAudioState: () => audio.getState(),
+    forceLevelComplete: () => engine.debugForceLevelComplete(Date.now()),
+    attemptActiveTargetHit: () => engine.debugAttemptActiveTargetHit(Date.now()),
+    coverActiveTarget: () => coverActiveTargetForTest(),
+    closeWindow: (id: string) => {
+      const handle = windowManager.getHandle(id)
+      if (!handle?.ref || handle.ref.closed) {
+        return false
+      }
+
+      handle.ref.close()
+      return true
+    },
+    setFrontWindow: (id: string | null) => {
+      engine.setFrontWindowId(id)
+    },
+  }
+}
+
+function coverActiveTargetForTest(): boolean {
+  const snapshot = engine.getSnapshot()
+  const activeTarget = snapshot.activeTarget
+  if (!activeTarget) {
+    return false
+  }
+
+  const targetWindow = snapshot.windows.find((windowState) => windowState.id === activeTarget.windowId)
+  const coverWindow = snapshot.windows.find((windowState) =>
+    snapshot.activeWindowIds.includes(windowState.id) && windowState.id !== activeTarget.windowId,
+  )
+
+  if (!targetWindow || !coverWindow) {
+    return false
+  }
+
+  engine.upsertWindow({
+    ...coverWindow,
+    x: targetWindow.x,
+    y: targetWindow.y,
+    width: targetWindow.width,
+    height: targetWindow.height,
+    contentX: targetWindow.contentX,
+    contentY: targetWindow.contentY,
+    contentWidth: targetWindow.contentWidth,
+    contentHeight: targetWindow.contentHeight,
+    visible: true,
+  })
+  engine.setFrontWindowId(coverWindow.id)
+  return true
 }
 
 function setPopupAccessState(nextState: PopupAccessState): void {
@@ -937,6 +1068,10 @@ function syncDeckPresentation(): void {
 function loadPopupAccessState(): PopupAccessState {
   const storedValue = window.localStorage.getItem(POPUP_ACCESS_STORAGE_KEY)
   return storedValue === 'allowed' || storedValue === 'blocked' ? storedValue : 'unknown'
+}
+
+function isTestHarnessEnabled(): boolean {
+  return new URLSearchParams(window.location.search).get('test') === '1'
 }
 
 function createSessionId(): string {

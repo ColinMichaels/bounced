@@ -16,40 +16,30 @@ Implemented now:
 - click-to-shoot barrier clearing
 - relay-room score nodes
 - ambient room bonuses for score, charges, and time reduction
+- stack-aware hidden-objective scoring rules for overlapped rooms
 - campaign unlock flow across 100 generated levels
 - generated clear-time medals with persistent best ranks
-- bridge-pulse helper utility with spendable run charges
+- shared utility charges with `bridge pulse` and `time brake`
 - host-side synthesized audio feedback
 - focused-room xray overlays for overlapped hidden structure
 - guarded level-switch confirmation during active runs
+- browser-level smoke coverage for popup spawn, summary actions, room-close abort, and hidden-objective overlap stacks
 - compact host and popup UI
 
 Not implemented yet:
 
-- a second helper ability beyond bridge pulse
 - deeper spendable upgrade economy
 - decoys / multiple active balls as a real mode
 
+## Immediate Follow-Up TODOs
+
+- Playtest the stack-aware hidden-objective rule across real Chrome window-focus edge cases, especially title-bar dragging and macOS vs Windows popup behavior.
+- Balance the shared utility economy now that charges can be spent on both bridge pulse and time brake.
+- Keep trimming the summary report if it regrows; the current rule is that primary actions must stay visible without depending on a tall popup window.
+
 ## Near-Term TODO
 
-### 1. Second helper utility
-
-Goal:
-
-- add a second utility that solves a different problem than bridge pulse
-
-Current state:
-
-- bridge pulse is the only spendable active utility
-- bonuses and medal gains can already feed utility charges
-
-Next shape:
-
-- add one new tactical button with a different problem-space
-- examples: short slow-time, quick route ping, or obstacle burst
-- keep it run-local and charge-based like bridge pulse
-
-### 2. Upgrade and reward economy
+### 1. Upgrade and reward economy
 
 Goal:
 
@@ -57,16 +47,17 @@ Goal:
 
 Current state:
 
-- ambient bonuses can award score, time, or bridge-pulse charges
+- ambient bonuses can award score, time, or utility charges
 - medal improvements already award score and extra charges
+- players can now spend those charges on both bridge pulse and time brake
 
-Planned shape:
+Next shape:
 
 - add more spendable run resources or unlock-style perks
 - make reward choices matter more than raw score gain
 - decide whether some rewards should be player-choice based instead of fixed
 
-### 3. Xray and overlap readability
+### 2. Xray and overlap readability
 
 Goal:
 
@@ -83,7 +74,7 @@ Planned shape:
 - tune contrast and responsiveness without bringing back render lag
 - keep xray visuals restricted to the focused top room unless a better z-order heuristic appears
 
-### 4. Time medals and run pacing
+### 3. Time medals and run pacing
 
 Goal:
 
@@ -118,9 +109,10 @@ Candidate abilities:
 
 Current state:
 
-- first helper utility is now `bridge pulse`
+- shared utility charges now feed both `bridge pulse` and `time brake`
 - bonus pickups and stronger medal clears can award charges
-- spending a charge temporarily suppresses room-side locks
+- bridge pulse suppresses side locks
+- time brake slows the live signal briefly
 
 ### Stronger level design
 

@@ -55,6 +55,7 @@ The important statuses are:
 - `SIDE LOCK` count: some edges of that room will not allow entry
 - `BONUS LIVE` or `BONUS xN`: there is at least one bonus pickup in that room
 - `PULSE`: `Bridge Pulse` is active and side locks are temporarily suppressed
+- `BRAKE`: `Time Brake` is active and the ball is temporarily slowed
 
 ## How Rooms Connect
 
@@ -107,6 +108,12 @@ You must route the ball through:
 
 You cannot skip ahead. If the ball reaches the goal before the relays are cleared, nothing happens.
 
+There is also one important visibility rule:
+
+- a relay or goal only counts if it is actually visible in the room on top
+- if another room is covering that target, the ball touching the hidden spot does not score it
+- if you want the hit to count, bring the target room back to the front or uncover it
+
 ## Bonuses
 
 There are two bonus styles in the current game.
@@ -118,7 +125,7 @@ When you clear the barriers in the current active relay room, a relay bonus node
 If the ball touches it:
 
 - you gain bonus score
-- you gain a `Bridge Pulse` charge
+- you gain a utility charge
 
 If the ball leaves that relay room before touching the bonus:
 
@@ -131,14 +138,16 @@ Later levels can also spawn extra bonuses in non-start rooms.
 These can give:
 
 - score
-- a `Bridge Pulse` charge
+- a utility charge
 - a small time reduction
 
 Ambient bonuses do not replace relay progression. They are optional pickups along the way.
 
-## Bridge Pulse
+## Utilities
 
-`Bridge Pulse` is your first helper ability.
+Utility charges are shared across the helper abilities on the control deck.
+
+### Bridge Pulse
 
 When you have at least one charge, you can activate it from the control deck.
 
@@ -152,6 +161,22 @@ This is best used when:
 - one blocked side is the only thing stopping a route
 - the ball is already close to the room boundary you need
 - you want to salvage a run instead of rebuilding the whole layout
+
+### Time Brake
+
+`Time Brake` is your second helper ability.
+
+When you spend one utility charge:
+
+- the live signal slows down for a short burst
+- the level timer keeps running
+- you get a calmer window to finish the route you were already building
+
+This is best used when:
+
+- the ball is entering a crowded relay or goal room too fast
+- you need a short correction window in a late level
+- pulse would not help because the problem is timing, not a locked edge
 
 ## The Timer And Medals
 
@@ -168,7 +193,7 @@ Levels have generated `bronze`, `silver`, and `gold` targets.
 Finishing faster helps in two ways:
 
 - you improve your record
-- better medals can award extra score and extra pulse charges
+- better medals can award extra score and extra utility charges
 
 ## Xray Overlap View
 
@@ -180,6 +205,11 @@ Right now the xray view shows:
 - hidden blocked sides
 
 This does not change gameplay. It is only a visual aid to help you understand what is underneath.
+
+Important:
+
+- xray does not make hidden relays or goals scoreable
+- if you cannot actually see the live target, you cannot clear it
 
 ## Pause And Resume
 
@@ -226,6 +256,6 @@ Reset your thinking to this:
 - Where is the ball right now?
 - Which room is live right now?
 - Which edge is actually open?
-- Do I need to move windows, shoot barriers, or spend a pulse charge?
+- Do I need to move windows, shoot barriers, or spend a utility charge?
 
 That is the real loop of the game.

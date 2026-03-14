@@ -94,9 +94,12 @@ export interface AmbientBonusState extends GoalState {
   timeValueMs: number
 }
 
+export type ActiveUtilityKind = 'bridge_pulse' | 'time_brake'
+
 export interface ActiveUtilityState {
-  kind: 'bridge_pulse'
+  kind: ActiveUtilityKind
   label: string
+  shortLabel: string
   remainingMs: number
 }
 

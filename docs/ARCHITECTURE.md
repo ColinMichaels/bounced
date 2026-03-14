@@ -66,7 +66,7 @@ Responsibilities:
 - maintain authoritative room registry
 - own level selection, unlocks, score, streak, and campaign progression
 - track current attempt time, saved per-level best times, and best earned medals
-- manage run-local bridge-pulse charges and active utility state
+- manage run-local utility charges and active utility state
 - spawn and update the signal ball
 - derive room-local obstacle geometry
 - derive route state: start room, relay rooms, goal room
@@ -89,7 +89,7 @@ Responsibilities:
 - forward click input as room shots
 - render barriers, route targets, bonus pickups, and side locks
 - render focused-room xray overlays for overlapped hidden structure
-- reflect active utility states like bridge-pulse lock suppression
+- reflect active utility states like bridge-pulse lock suppression or time-brake slowdown
 
 ### Shared Protocol
 
@@ -141,6 +141,7 @@ The host worker ticker sends periodic tick events into the host UI. On each tick
 - ambient non-start-room bonuses are derived from the level bonus profile
 - medal pace is evaluated from generated per-level clear-time thresholds
 - active bridge-pulse utility can temporarily suppress side locks
+- active time-brake utility can temporarily slow the signal without slowing the level timer
 - relay / goal collisions are tested
 - a new `GameSnapshot` is broadcast
 
@@ -181,7 +182,7 @@ Rules:
 - relay and goal rooms can contain static barrier objects
 - higher levels can assign blocked edges to active rooms
 - barriers can be destroyed via room clicks
-- bonus pickups and stronger medal clears can award bridge-pulse charges
+- bonus pickups and stronger medal clears can award shared utility charges
 - ambient room bonuses can award score, charges, or time reductions
 - bridge pulse temporarily suppresses room-side locks for the active run
 - only one relay target is active at a time

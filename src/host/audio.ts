@@ -41,6 +41,10 @@ export class HostAudioEngine {
     void this.context.resume()
   }
 
+  getState(): AudioContextState | 'uninitialized' {
+    return this.context?.state ?? 'uninitialized'
+  }
+
   dispose(): void {
     this.previousSnapshot = null
 
