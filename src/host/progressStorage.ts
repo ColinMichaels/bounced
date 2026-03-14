@@ -1,8 +1,9 @@
 import { MAX_LEVEL } from '../engine/difficulty'
-import type { PlayerProgressState } from '../shared/types'
+import type { MedalTier, PlayerProgressState } from '../shared/types'
 
 const STORAGE_KEY = 'bounced.player-progress'
-const STORAGE_VERSION = 1
+const STORAGE_VERSION = 3
+const MEDAL_TIERS = new Set(['none', 'bronze', 'silver', 'gold'])
 
 export class ProgressStorage {
   private lastSavedPayload = ''
@@ -66,6 +67,39 @@ function normalizeProgressState(source: unknown): PlayerProgressState | null {
     : Math.min(MAX_LEVEL, highestCompletedLevel + 1)
   const maxUnlockedLevel = clampInt(candidate.maxUnlockedLevel, Math.max(1, unlockedFromCompleted), MAX_LEVEL)
   const scoreFloor = completedLevels.length
+  const bestLevelTimesMs = candidate.bestLevelTimesMs && typeof candidate.bestLevelTimesMs === 'object'
+    ? Object.fromEntries(
+        Object.entries(candidate.bestLevelTimesMs as Record<string, unknown>)
+          .flatMap(([key, value]) => {
+            const numericKey = Number(key)
+            if (!Number.isInteger(numericKey) || numericKey < 1 || numericKey > MAX_LEVEL) {
+              return []
+            }
+
+            const normalizedValue = clampInt(value, 1, Number.MAX_SAFE_INTEGER)
+            if (normalizedValue <= 0) {
+              return []
+            }
+
+            return [[String(numericKey), normalizedValue] as const]
+          }),
+      )
+    : {}
+  const bestLevelMedals: Record<string, MedalTier> = candidate.bestLevelMedals && typeof candidate.bestLevelMedals === 'object'
+    ? Object.fromEntries(
+        Object.entries(candidate.bestLevelMedals as Record<string, unknown>)
+          .flatMap(([key, value]) => {
+            const numericKey = Number(key)
+            if (!Number.isInteger(numericKey) || numericKey < 1 || numericKey > MAX_LEVEL) {
+              return []
+            }
+
+            return typeof value === 'string' && MEDAL_TIERS.has(value)
+              ? [[String(numericKey), value as MedalTier] as const]
+              : []
+          }),
+      )
+    : {}
 
   return {
     version: STORAGE_VERSION,
@@ -74,6 +108,8 @@ function normalizeProgressState(source: unknown): PlayerProgressState | null {
     selectedLevel: clampInt(candidate.selectedLevel, 1, maxUnlockedLevel),
     maxUnlockedLevel,
     completedLevels,
+    bestLevelTimesMs,
+    bestLevelMedals,
   }
 }
 

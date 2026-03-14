@@ -1,14 +1,22 @@
 import '../styles/app.css'
 
 import { GameEngine } from '../engine/gameEngine'
-import { DIFFICULTY_LEVELS, getDifficultyForLevel, MAX_LEVEL } from '../engine/difficulty'
+import {
+  DIFFICULTY_LEVELS,
+  getDifficultyForLevel,
+  getMedalThresholdMs,
+  getNextMedalTier,
+  MAX_LEVEL,
+} from '../engine/difficulty'
 import { createGameChannelName, openGameChannel } from '../network/channel'
 import type { GameMessage } from '../shared/messages'
-import type { GameSnapshot } from '../shared/types'
+import type { GameSnapshot, MedalTier } from '../shared/types'
+import { HostAudioEngine } from './audio'
 import { ProgressStorage } from './progressStorage'
 import { WindowManager } from './windowManager'
 
 const startButton = must<HTMLButtonElement>('start-button')
+const utilityButton = must<HTMLButtonElement>('utility-button')
 const respawnButton = must<HTMLButtonElement>('respawn-button')
 const stopButton = must<HTMLButtonElement>('stop-button')
 const warning = must<HTMLParagraphElement>('host-warning')
@@ -18,6 +26,12 @@ const levelSelect = must<HTMLDivElement>('level-select')
 const scoreValue = must<HTMLElement>('score-value')
 const streakValue = must<HTMLElement>('streak-value')
 const bestStreakValue = must<HTMLElement>('best-streak-value')
+const timerValue = must<HTMLElement>('timer-value')
+const bestTimeValue = must<HTMLElement>('best-time-value')
+const medalValue = must<HTMLElement>('medal-value')
+const targetTimeValue = must<HTMLElement>('target-time-value')
+const utilityChargeValue = must<HTMLElement>('utility-charge-value')
+const utilityStateValue = must<HTMLElement>('utility-state-value')
 const levelValue = must<HTMLElement>('level-value')
 const windowCountValue = must<HTMLElement>('window-count-value')
 const windowList = must<HTMLUListElement>('window-list')
@@ -30,10 +44,12 @@ const engine = new GameEngine(channel)
 const progressStorage = new ProgressStorage(window.localStorage)
 const windowManager = new WindowManager(window, channelName, sessionId)
 const ticker = new Worker(new URL('./ticker.worker.ts', import.meta.url), { type: 'module' })
+const audio = new HostAudioEngine()
 const MAX_LEVEL_WINDOWS = Math.max(...DIFFICULTY_LEVELS.map((level) => level.activeWindows))
 const MAX_LEVEL_RELAYS = Math.max(...DIFFICULTY_LEVELS.map((level) => Math.max(1, level.activeWindows - 2)))
 const MIN_LEVEL_SPEED = Math.min(...DIFFICULTY_LEVELS.map((level) => level.speed))
 const MAX_LEVEL_SPEED = Math.max(...DIFFICULTY_LEVELS.map((level) => level.speed))
+const HOST_RENDER_INTERVAL_MS = 1000 / 12
 
 let hasStarted = false
 let readinessWarning = ''
@@ -44,23 +60,25 @@ let desiredWindowCount = 0
 let lastLayoutKey = ''
 let awaitingFreshBoundsSince = 0
 let hostHasFocus = document.visibilityState === 'visible' && document.hasFocus()
+let pausedForDeckFocus = false
+let lastLevelSelectKey = ''
+let latestSnapshot = engine.getSnapshot()
+let renderFrameId = 0
+let lastRenderAt = 0
 
 engine.restoreProgress(progressStorage.load())
-engine.subscribe(renderSnapshot)
+engine.subscribe(handleEngineSnapshot)
 
 window.addEventListener('focus', () => {
-  hostHasFocus = true
-  syncDeckPresentation()
+  updateHostFocusState(true)
 })
 
 window.addEventListener('blur', () => {
-  hostHasFocus = false
-  syncDeckPresentation()
+  updateHostFocusState(false)
 })
 
 document.addEventListener('visibilitychange', () => {
-  hostHasFocus = document.visibilityState === 'visible' && document.hasFocus()
-  syncDeckPresentation()
+  updateHostFocusState(document.visibilityState === 'visible' && document.hasFocus())
 })
 
 levelSelect.addEventListener('click', (event) => {
@@ -103,8 +121,9 @@ ticker.onmessage = (event: MessageEvent<{ type: 'tick'; now: number }>) => {
 }
 
 startButton.addEventListener('click', () => {
+  audio.unlock()
   if (hasStarted && windowManager.getOpenCount() > 0) {
-    recallGameWindows()
+    resumeGameplay()
     return
   }
 
@@ -113,7 +132,8 @@ startButton.addEventListener('click', () => {
   const initialWindowCount = getDifficultyForLevel(initialLevel).activeWindows
   desiredWindowCount = initialWindowCount
   lastLayoutKey = `${initialLevel}:${initialWindowCount}`
-  windowManager.ensureWindowPool(initialWindowCount, initialLevel, { relayout: true })
+  const handles = windowManager.ensureWindowPool(initialWindowCount, initialLevel, { relayout: true })
+  sendLayoutHints(handles)
   const openCount = windowManager.getOpenCount()
 
   if (openCount < initialWindowCount) {
@@ -127,6 +147,7 @@ startButton.addEventListener('click', () => {
   readinessWarning = ''
 
   hasStarted = true
+  pausedForDeckFocus = false
   followWindows = true
   lastFocusedOwnerId = null
   lastFollowAt = 0
@@ -138,11 +159,19 @@ startButton.addEventListener('click', () => {
 })
 
 respawnButton.addEventListener('click', () => {
+  audio.unlock()
   engine.respawnBall()
 })
 
+utilityButton.addEventListener('click', () => {
+  audio.unlock()
+  engine.activateBridgePulse(Date.now())
+})
+
 stopButton.addEventListener('click', () => {
+  audio.unlock()
   hasStarted = false
+  pausedForDeckFocus = false
   desiredWindowCount = 0
   readinessWarning = ''
   lastFocusedOwnerId = null
@@ -150,15 +179,49 @@ stopButton.addEventListener('click', () => {
   lastLayoutKey = ''
   awaitingFreshBoundsSince = 0
   windowManager.closeAll()
+  audio.pause()
   engine.endGame()
   syncDeckPresentation()
 })
 
 window.addEventListener('beforeunload', () => {
+  audio.dispose()
   channel.close()
   windowManager.closeAll()
   ticker.terminate()
 })
+
+function handleEngineSnapshot(snapshot: GameSnapshot): void {
+  if (pausedForDeckFocus && hasStarted && snapshot.phase !== 'idle' && snapshot.phase !== 'paused' && !snapshot.campaignComplete) {
+    audio.pause()
+    engine.pause(Date.now())
+    return
+  }
+
+  latestSnapshot = snapshot
+  audio.handleSnapshot(snapshot)
+  scheduleRender()
+}
+
+function scheduleRender(): void {
+  if (renderFrameId !== 0) {
+    return
+  }
+
+  renderFrameId = window.requestAnimationFrame(flushRender)
+}
+
+function flushRender(now: number): void {
+  renderFrameId = 0
+
+  if (now - lastRenderAt < HOST_RENDER_INTERVAL_MS) {
+    scheduleRender()
+    return
+  }
+
+  lastRenderAt = now
+  renderSnapshot(latestSnapshot)
+}
 
 function handleMessage(message: GameMessage): void {
   switch (message.type) {
@@ -184,10 +247,16 @@ function handleMessage(message: GameMessage): void {
       engine.handleCatchAttempt(message.payload)
       break
     case 'request_sync':
+      sendLayoutHint(message.payload.id)
       renderSnapshot(engine.getSnapshot())
       channel.post({ type: 'snapshot', payload: engine.getSnapshot() })
       break
     case 'focus_windows':
+      if (pausedForDeckFocus) {
+        resumeGameplay(message.payload.preferredId)
+        break
+      }
+
       followWindows = true
       windowManager.recallAll(message.payload.preferredId)
       break
@@ -202,11 +271,13 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   const goalWindowTitle = snapshot.windows.find((windowState) => windowState.id === snapshot.goalWindowId)?.title ?? 'pending'
   const layoutKey = `${snapshot.selectedLevel}:${snapshot.requiredWindowCount}`
   const liveObstacles = snapshot.obstacles.filter((obstacle) => !obstacle.destroyed)
+  const progress = engine.getProgressState()
 
-  progressStorage.save(engine.getProgressState())
+  progressStorage.save(progress)
 
   if (hasStarted && snapshot.campaignComplete) {
     hasStarted = false
+    pausedForDeckFocus = false
     desiredWindowCount = 0
     lastFocusedOwnerId = null
     lastFollowAt = 0
@@ -220,7 +291,8 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     lastLayoutKey = layoutKey
     desiredWindowCount = snapshot.requiredWindowCount
     lastFocusedOwnerId = null
-    windowManager.ensureWindowPool(desiredWindowCount, snapshot.selectedLevel, { relayout: true })
+    const handles = windowManager.ensureWindowPool(desiredWindowCount, snapshot.selectedLevel, { relayout: true })
+    sendLayoutHints(handles)
     windowManager.recallAll()
     awaitingFreshBoundsSince = Date.now()
 
@@ -234,9 +306,22 @@ function renderSnapshot(snapshot: GameSnapshot): void {
   scoreValue.textContent = String(snapshot.score)
   streakValue.textContent = String(snapshot.streak)
   bestStreakValue.textContent = String(snapshot.bestStreak)
+  timerValue.textContent = formatDurationMs(snapshot.levelElapsedMs)
+  bestTimeValue.textContent = snapshot.bestLevelTimeMs === null ? '--:--.-' : formatDurationMs(snapshot.bestLevelTimeMs)
+  medalValue.textContent = formatMedalTier(snapshot.bestLevelMedal)
+  medalValue.dataset.tier = snapshot.bestLevelMedal
+  targetTimeValue.textContent = formatMedalTarget(snapshot.bestLevelMedal, snapshot.difficulty.medalThresholds)
+  utilityChargeValue.textContent = String(snapshot.utilityCharges)
+  utilityStateValue.textContent = formatUtilityState(snapshot)
   levelValue.textContent = `${snapshot.selectedLevel} / ${MAX_LEVEL}`
   windowCountValue.textContent = `${snapshot.availableWindowCount} / ${snapshot.requiredWindowCount}`
   startButton.textContent = hasStarted && windowManager.getOpenCount() > 0 ? 'Resume Game' : 'Start Game'
+  utilityButton.textContent = snapshot.activeUtility ? 'Bridge Pulse Live' : 'Bridge Pulse'
+  respawnButton.disabled = !hasStarted || snapshot.phase === 'paused'
+  utilityButton.disabled = !hasStarted
+    || snapshot.phase !== 'running'
+    || snapshot.utilityCharges <= 0
+    || snapshot.activeUtility !== null
   stopButton.textContent = 'End Session'
 
   statusText.textContent = hasStarted
@@ -248,6 +333,8 @@ function renderSnapshot(snapshot: GameSnapshot): void {
     `Route: start + ${Math.max(0, snapshot.bridgeWindowIds.length)} relay${snapshot.bridgeWindowIds.length === 1 ? '' : 's'} + goal.`,
     `Barriers: ${liveObstacles.length}.`,
     `Goal window: ${goalWindowTitle}.`,
+    `Pulse charges: ${snapshot.utilityCharges}.`,
+    snapshot.activeUtility ? `Utility live: ${formatDurationMs(snapshot.activeUtility.remainingMs)} remaining.` : 'Utility ready when a charge is available.',
     `Unlocked levels: 1-${snapshot.maxUnlockedLevel}.`,
     `${snapshot.completedLevels.length} of ${MAX_LEVEL} levels cleared.`,
     'Windows spawn disconnected each level. Build a route and clear relays in order.',
@@ -264,18 +351,29 @@ function renderSnapshot(snapshot: GameSnapshot): void {
         ? `${routeWindow.role}${routeWindow.role === 'bridge' ? ` ${routeWindow.order + 1}` : ''} • ${routeWindow.status}`
         : 'standby'
       const obstacleCount = liveObstacles.filter((obstacle) => obstacle.windowId === windowState.id).length
+      const blockedEdgeCount = routeWindow?.blockedEdges.length ?? 0
 
       return `
         <li>
           <span>${windowState.title}</span>
-          <span class="${marker}">${routeLabel} • ${obstacleCount} barrier${obstacleCount === 1 ? '' : 's'} • ${visibility}</span>
+          <span class="${marker}">${routeLabel} • ${obstacleCount} barrier${obstacleCount === 1 ? '' : 's'} • ${blockedEdgeCount} side lock${blockedEdgeCount === 1 ? '' : 's'} • ${visibility}</span>
         </li>
       `
     })
     .join('')
 
   windowList.innerHTML = items || '<li>Waiting for play windows.</li>'
-  levelSelect.innerHTML = renderLevelButtons(snapshot)
+  const bestTimeSignature = Object.entries(progress.bestLevelTimesMs)
+    .map(([level, timeMs]) => `${level}:${timeMs}`)
+    .join(',')
+  const medalSignature = Object.entries(progress.bestLevelMedals)
+    .map(([level, medal]) => `${level}:${medal}`)
+    .join(',')
+  const levelSelectKey = `${snapshot.selectedLevel}:${snapshot.maxUnlockedLevel}:${snapshot.completedLevels.join(',')}:${bestTimeSignature}:${medalSignature}`
+  if (levelSelectKey !== lastLevelSelectKey) {
+    levelSelect.innerHTML = renderLevelButtons(snapshot, progress)
+    lastLevelSelectKey = levelSelectKey
+  }
   syncWindowFollow(snapshot)
   renderWarnings()
   syncDeckPresentation()
@@ -292,7 +390,9 @@ function renderWarnings(): void {
     warnings.push('Syncing live window bounds after layout change.')
   }
 
-  if (!readinessWarning && hasStarted) {
+  if (pausedForDeckFocus) {
+    warnings.push('Session paused while the control deck is focused. Press Resume Game or click a room to continue.')
+  } else if (!readinessWarning && hasStarted) {
     warnings.push('Use Resume Game or click any game window to recall the cluster. Closing any room ends the current session.')
   }
 
@@ -321,18 +421,58 @@ function syncWindowFollow(snapshot: GameSnapshot): void {
   lastFollowAt = now
 }
 
-function recallGameWindows(): void {
+function resumeGameplay(preferredId?: string | null): void {
   if (!hasStarted) {
     return
   }
 
+  if (pausedForDeckFocus) {
+    pausedForDeckFocus = false
+    engine.resume(Date.now())
+    audio.resume()
+  }
+
   const snapshot = engine.getSnapshot()
-  const preferredId = snapshot.ball?.ownerWindowId ?? snapshot.activeWindowIds[0] ?? null
+  const nextPreferredId = preferredId ?? snapshot.ball?.ownerWindowId ?? snapshot.activeWindowIds[0] ?? null
 
   followWindows = true
   lastFocusedOwnerId = null
   lastFollowAt = 0
-  windowManager.recallAll(preferredId)
+  windowManager.recallAll(nextPreferredId)
+  syncDeckPresentation()
+}
+
+function sendLayoutHints(handles: ReturnType<WindowManager['ensureWindowPool']>): void {
+  handles.forEach((handle) => {
+    if (!handle.layout) {
+      return
+    }
+
+    channel.post({
+      type: 'layout_hint',
+      payload: {
+        id: handle.id,
+        outerWidth: Math.round(handle.layout.width),
+        outerHeight: Math.round(handle.layout.height),
+      },
+    })
+  })
+}
+
+function sendLayoutHint(id: string): void {
+  const handle = windowManager.getHandle(id)
+  if (!handle?.layout) {
+    return
+  }
+
+  channel.post({
+    type: 'layout_hint',
+    payload: {
+      id: handle.id,
+      outerWidth: Math.round(handle.layout.width),
+      outerHeight: Math.round(handle.layout.height),
+    },
+  })
 }
 
 function getClosedGameWindowId(): string | null {
@@ -349,6 +489,7 @@ function abortSessionDueToClosedWindow(windowId: string): void {
     ?? `Room ${windowId.replace('play-window-', '')}`
 
   hasStarted = false
+  pausedForDeckFocus = false
   desiredWindowCount = 0
   followWindows = true
   readinessWarning = `${closedWindowTitle} was closed during play. Session aborted.`
@@ -357,8 +498,31 @@ function abortSessionDueToClosedWindow(windowId: string): void {
   lastLayoutKey = ''
   awaitingFreshBoundsSince = 0
   windowManager.closeAll()
+  audio.pause()
   engine.endGame(`${closedWindowTitle} was closed during play.`)
   syncDeckPresentation()
+}
+
+function updateHostFocusState(nextHasFocus: boolean): void {
+  const previousHasFocus = hostHasFocus
+  hostHasFocus = nextHasFocus
+
+  if (hasStarted && nextHasFocus && !previousHasFocus) {
+    pauseForControlDeck()
+  }
+
+  syncDeckPresentation()
+}
+
+function pauseForControlDeck(): void {
+  if (!hasStarted || pausedForDeckFocus || latestSnapshot.phase === 'idle' || latestSnapshot.campaignComplete) {
+    return
+  }
+
+  pausedForDeckFocus = true
+  audio.pause()
+  engine.pause(Date.now())
+  renderWarnings()
 }
 
 function must<T extends HTMLElement>(id: string): T {
@@ -371,7 +535,7 @@ function must<T extends HTMLElement>(id: string): T {
   return element as T
 }
 
-function renderLevelButtons(snapshot: GameSnapshot): string {
+function renderLevelButtons(snapshot: GameSnapshot, progress: ReturnType<GameEngine['getProgressState']>): string {
   const completed = new Set(snapshot.completedLevels)
 
   return Array.from({ length: MAX_LEVEL }, (_, index) => {
@@ -397,6 +561,15 @@ function renderLevelButtons(snapshot: GameSnapshot): string {
     const windowsFill = getMetricFill(difficulty.activeWindows, 1, MAX_LEVEL_WINDOWS)
     const relayFill = getMetricFill(relayCount, 1, MAX_LEVEL_RELAYS)
     const speedFill = getMetricFill(difficulty.speed, MIN_LEVEL_SPEED, MAX_LEVEL_SPEED)
+    const bestTime = progress.bestLevelTimesMs[String(level)]
+    const bestMedal = progress.bestLevelMedals[String(level)] ?? 'none'
+    const medalBadge = bestMedal === 'none'
+      ? ''
+      : `<span class="level-chip__medal level-chip__medal--${bestMedal}">${formatMedalTier(bestMedal)}</span>`
+    const metaItems = [
+      `<span class="level-chip__meta-item">Gold ${formatDurationMs(difficulty.medalThresholds.goldMs)}</span>`,
+      bestTime ? `<span class="level-chip__meta-item">Best ${formatDurationMs(bestTime)}</span>` : '',
+    ].filter(Boolean).join('')
 
     return `
       <button class="${classes}" data-level="${level}" ${isLocked ? 'disabled' : ''}>
@@ -408,6 +581,7 @@ function renderLevelButtons(snapshot: GameSnapshot): string {
                 <path d="M240-80q-33 0-56.5-23.5T160-160v-400q0-33 23.5-56.5T240-640h40v-80q0-83 58.5-141.5T480-920q83 0 141.5 58.5T680-720v80h40q33 0 56.5 23.5T800-560v400q0 33-23.5 56.5T720-80H240Zm0-80h480v-400H240v400Zm296.5-143.5Q560-327 560-360t-23.5-56.5Q513-440 480-440t-56.5 23.5Q400-393 400-360t23.5 56.5Q447-280 480-280t56.5-23.5ZM360-640h240v-80q0-50-35-85t-85-35q-50 0-85 35t-35 85v80ZM240-160v-400 400Z"/>
               </svg>
             ` : ''}
+            ${medalBadge}
             ${isLocked ? '' : `<em>${state}</em>`}
           </span>
         </span>
@@ -434,6 +608,7 @@ function renderLevelButtons(snapshot: GameSnapshot): string {
             <span class="level-chip__value">${difficulty.speed}</span>
           </span>
         </span>
+        <span class="level-chip__meta">${metaItems}</span>
       </button>
     `
   }).join('')
@@ -446,6 +621,43 @@ function getMetricFill(value: number, min: number, max: number): number {
 
   const normalized = (value - min) / (max - min)
   return Math.round((0.18 + (normalized * 0.82)) * 100)
+}
+
+function formatDurationMs(durationMs: number): string {
+  const totalTenths = Math.max(0, Math.round(durationMs / 100))
+  const minutes = Math.floor(totalTenths / 600)
+  const seconds = Math.floor((totalTenths % 600) / 10)
+  const tenths = totalTenths % 10
+
+  return `${minutes}:${String(seconds).padStart(2, '0')}.${tenths}`
+}
+
+function formatMedalTier(tier: MedalTier): string {
+  return tier === 'none' ? 'NONE' : tier.toUpperCase()
+}
+
+function formatMedalTarget(
+  currentMedal: MedalTier,
+  thresholds: GameSnapshot['difficulty']['medalThresholds'],
+): string {
+  const nextTier = getNextMedalTier(currentMedal)
+  if (!nextTier) {
+    return `GOLD ${formatDurationMs(thresholds.goldMs)}`
+  }
+
+  return `${formatMedalTier(nextTier)} ${formatDurationMs(getMedalThresholdMs(thresholds, nextTier))}`
+}
+
+function formatUtilityState(snapshot: GameSnapshot): string {
+  if (snapshot.activeUtility) {
+    return `${snapshot.activeUtility.label} ${formatDurationMs(snapshot.activeUtility.remainingMs)}`
+  }
+
+  if (snapshot.phase !== 'running') {
+    return 'OFFLINE'
+  }
+
+  return snapshot.utilityCharges > 0 ? 'READY' : 'NO CHARGE'
 }
 
 function hasFreshWindowBounds(snapshot: GameSnapshot, since: number): boolean {
@@ -469,7 +681,7 @@ function hasFreshWindowBounds(snapshot: GameSnapshot, since: number): boolean {
 
 function syncDeckPresentation(): void {
   hostShell.dataset.sessionState = hasStarted ? 'armed' : 'idle'
-  hostShell.dataset.deckFocus = hasStarted && !hostHasFocus ? 'background' : 'foreground'
+  hostShell.dataset.deckFocus = hasStarted && !hostHasFocus && !pausedForDeckFocus ? 'background' : 'foreground'
 }
 
 function createSessionId(): string {

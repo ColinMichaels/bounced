@@ -1,5 +1,5 @@
 import { WINDOW_GRID_COLUMNS } from './constants'
-import type { ObstacleState, Rect, WindowBoundsPayload, WindowState } from './types'
+import type { ObstacleState, Rect, WindowBoundsPayload, WindowEdge, WindowState } from './types'
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -69,36 +69,81 @@ export function pointInWindowUnion<T extends WindowBoundsPayload | WindowState>(
   return findContainingWindow(windows, x, y) !== null
 }
 
-export function rectsConnect(left: Rect, right: Rect, epsilon = 0.5): boolean {
+export function rectsConnect(
+  left: Rect,
+  right: Rect,
+  leftBlockedEdges: WindowEdge[] = [],
+  rightBlockedEdges: WindowEdge[] = [],
+  epsilon = 0.5,
+): boolean {
+  const connection = getRectConnectionEdges(left, right, epsilon)
+  if (!connection) {
+    return false
+  }
+
+  return !leftBlockedEdges.includes(connection.left) && !rightBlockedEdges.includes(connection.right)
+}
+
+export function getRectConnectionEdges(
+  left: Rect,
+  right: Rect,
+  epsilon = 0.5,
+): { left: WindowEdge; right: WindowEdge } | null {
   const horizontalOverlap = overlapLength(left.left, left.right, right.left, right.right)
   const verticalOverlap = overlapLength(left.top, left.bottom, right.top, right.bottom)
 
   if (horizontalOverlap > 0 && verticalOverlap > 0) {
-    return true
+    const leftCenterX = left.left + (left.width / 2)
+    const leftCenterY = left.top + (left.height / 2)
+    const rightCenterX = right.left + (right.width / 2)
+    const rightCenterY = right.top + (right.height / 2)
+
+    if (Math.abs(rightCenterX - leftCenterX) >= Math.abs(rightCenterY - leftCenterY)) {
+      return rightCenterX >= leftCenterX
+        ? { left: 'right', right: 'left' }
+        : { left: 'left', right: 'right' }
+    }
+
+    return rightCenterY >= leftCenterY
+      ? { left: 'down', right: 'up' }
+      : { left: 'up', right: 'down' }
   }
 
   if (horizontalOverlap > 0 && Math.abs(left.bottom - right.top) <= epsilon) {
-    return true
+    return {
+      left: 'down',
+      right: 'up',
+    }
   }
 
   if (horizontalOverlap > 0 && Math.abs(right.bottom - left.top) <= epsilon) {
-    return true
+    return {
+      left: 'up',
+      right: 'down',
+    }
   }
 
   if (verticalOverlap > 0 && Math.abs(left.right - right.left) <= epsilon) {
-    return true
+    return {
+      left: 'right',
+      right: 'left',
+    }
   }
 
   if (verticalOverlap > 0 && Math.abs(right.right - left.left) <= epsilon) {
-    return true
+    return {
+      left: 'left',
+      right: 'right',
+    }
   }
 
-  return false
+  return null
 }
 
 export function getConnectedWindows<T extends WindowBoundsPayload | WindowState>(
   windows: T[],
   seedId: string,
+  blockedEdgesByWindowId: Map<string, WindowEdge[]> = new Map(),
 ): T[] {
   const seed = windows.find((windowState) => windowState.id === seedId)
   if (!seed) {
@@ -124,7 +169,14 @@ export function getConnectedWindows<T extends WindowBoundsPayload | WindowState>
         continue
       }
 
-      if (rectsConnect(currentRect, rectFromWindow(candidate))) {
+      if (
+        rectsConnect(
+          currentRect,
+          rectFromWindow(candidate),
+          blockedEdgesByWindowId.get(current.id) ?? [],
+          blockedEdgesByWindowId.get(candidate.id) ?? [],
+        )
+      ) {
         queue.push(candidate)
       }
     }
