@@ -79,6 +79,7 @@ interface BouncedTestHarness {
   attemptActiveTargetHit: () => boolean
   coverActiveTarget: () => boolean
   resolveContainingWindowId: (x: number, y: number, preferredWindowId: string | null) => string | null
+  resolveMotionWindowIds: (x: number, y: number, preferredWindowId: string | null) => string[]
   closeWindow: (id: string) => boolean
   setFrontWindow: (id: string | null) => void
   pauseForDeckFocus: () => void
@@ -944,6 +945,8 @@ function installTestHarness(): void {
     coverActiveTarget: () => coverActiveTargetForTest(),
     resolveContainingWindowId: (x: number, y: number, preferredWindowId: string | null) =>
       engine.debugResolveContainingWindowId(x, y, preferredWindowId),
+    resolveMotionWindowIds: (x: number, y: number, preferredWindowId: string | null) =>
+      engine.debugResolveMotionWindowIds(x, y, preferredWindowId),
     closeWindow: (id: string) => {
       const handle = windowManager.getHandle(id)
       if (!handle?.ref || handle.ref.closed) {
