@@ -203,6 +203,7 @@ Right now the xray view shows:
 
 - hidden barriers
 - hidden blocked sides
+- hidden relay and goal markers as red masked ghosts
 
 This does not change gameplay. It is only a visual aid to help you understand what is underneath.
 
