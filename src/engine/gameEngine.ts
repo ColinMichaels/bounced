@@ -24,6 +24,8 @@ import type {
   MedalTier,
   ObstacleState,
   PlayerProgressState,
+  RunUpgradeId,
+  RunUpgradeLevels,
   RouteWindowState,
   ScoreNodeState,
   TargetState,
@@ -31,6 +33,7 @@ import type {
   WindowBoundsPayload,
   WindowState,
 } from '../shared/types'
+import { createRunUpgradeLevels, getRunUpgradeCost, getRunUpgradeDefinition } from '../shared/upgrades'
 
 type SnapshotListener = (snapshot: GameSnapshot) => void
 
@@ -75,6 +78,7 @@ const OBSTACLE_TEMPLATES: ObstacleAnchor[] = [
 ]
 const SCORE_NODE_VALUE = 1
 const SCORE_NODE_CHARGE_VALUE = 1
+const SCORE_NODE_CREDIT_VALUE = 1
 const BRIDGE_PULSE_DURATION_MS = 6_000
 const TIME_BRAKE_DURATION_MS = 4_500
 const TIME_BRAKE_SPEED_SCALE = 0.48
@@ -116,6 +120,11 @@ export class GameEngine {
   private bestStreak = 0
   private bonusCollectionCount = 0
   private utilityCharges = 0
+  private upgradeCredits = 0
+  private runUpgradeLevels: RunUpgradeLevels = createRunUpgradeLevels()
+  private currentLevelScoreGain = 0
+  private currentLevelChargeGain = 0
+  private currentLevelCreditGain = 0
   private bridgePulseEndsAt = 0
   private pausedBridgePulseRemainingMs = 0
   private timeBrakeEndsAt = 0
@@ -136,6 +145,7 @@ export class GameEngine {
   private pauseReason: PauseReason | null = null
   private pausedPhase: Exclude<GamePhase, 'idle' | 'paused'> | null = null
   private pausedNote: string | null = null
+  private pendingLevelLoadoutGrant = false
   private note = 'Idle. Arm the field to begin at level 1.'
   private lastStepAt = 0
   private lastShotAt = 0
@@ -211,6 +221,79 @@ export class GameEngine {
     }
   }
 
+  private resetRunUpgradeState(): void {
+    this.upgradeCredits = 0
+    this.runUpgradeLevels = createRunUpgradeLevels()
+    this.pendingLevelLoadoutGrant = false
+  }
+
+  private resetLevelRewardTracking(): void {
+    this.currentLevelScoreGain = 0
+    this.currentLevelChargeGain = 0
+    this.currentLevelCreditGain = 0
+  }
+
+  private queueLevelLoadoutGrant(): void {
+    this.pendingLevelLoadoutGrant = true
+    this.resetLevelRewardTracking()
+  }
+
+  private grantPendingLevelLoadout(): void {
+    if (!this.pendingLevelLoadoutGrant) {
+      return
+    }
+
+    const reserveChargeCount = this.getRunUpgradeLevel('reserve_cells')
+    if (reserveChargeCount > 0) {
+      this.utilityCharges += reserveChargeCount
+    }
+
+    this.pendingLevelLoadoutGrant = false
+  }
+
+  private getRunUpgradeLevel(id: RunUpgradeId): number {
+    return this.runUpgradeLevels[id] ?? 0
+  }
+
+  private addScoreReward(amount: number): void {
+    if (amount <= 0) {
+      return
+    }
+
+    this.score += amount
+    this.currentLevelScoreGain += amount
+  }
+
+  private addUtilityChargeReward(amount: number): void {
+    if (amount <= 0) {
+      return
+    }
+
+    this.utilityCharges += amount
+    this.currentLevelChargeGain += amount
+  }
+
+  private addUpgradeCreditReward(amount: number): void {
+    if (amount <= 0) {
+      return
+    }
+
+    this.upgradeCredits += amount
+    this.currentLevelCreditGain += amount
+  }
+
+  private getRouteTargetRadius(difficulty: DifficultyLevel, isGoal: boolean): number {
+    const baseRadius = isGoal
+      ? Math.max(18, difficulty.radius * 1.8)
+      : Math.max(16, difficulty.radius * 1.45)
+
+    return baseRadius + (this.getRunUpgradeLevel('signal_lens') * 4)
+  }
+
+  private getUtilityDurationScale(): number {
+    return 1 + (this.getRunUpgradeLevel('pulse_coil') * 0.25)
+  }
+
   debugForceLevelComplete(now: number): boolean {
     const difficulty = getDifficultyForLevel(this.currentLevel)
     const activeWindows = this.getActiveWindows(difficulty.activeWindows)
@@ -226,7 +309,7 @@ export class GameEngine {
       windowId: goalWindow.id,
       x: goalRect.left + (goalRect.width / 2),
       y: goalRect.top + (goalRect.height / 2),
-      radius: Math.max(18, difficulty.radius * 1.8),
+      radius: this.getRouteTargetRadius(difficulty, true),
     }
 
     this.handleRouteHit(activeWindows, target, difficulty, now)
@@ -234,7 +317,7 @@ export class GameEngine {
   }
 
   debugAttemptActiveTargetHit(now: number): boolean {
-    if (this.phase !== 'running') {
+    if (this.phase !== 'running' && !(this.phase === 'paused' && this.pauseReason === 'focus')) {
       return false
     }
 
@@ -323,6 +406,8 @@ export class GameEngine {
     this.balls = []
     this.bonusCollectionCount = 0
     this.utilityCharges = 0
+    this.resetRunUpgradeState()
+    this.resetLevelRewardTracking()
     this.clearActiveUtilities()
     this.clearWindowFocusState()
     this.resetLevelTimer()
@@ -386,9 +471,11 @@ export class GameEngine {
       bestLevelTimeMs: this.bestLevelTimesMs.get(this.currentLevel) ?? null,
       bestLevelMedal: this.bestLevelMedals.get(this.currentLevel) ?? 'none',
       utilityCharges: this.utilityCharges,
+      upgradeCredits: this.upgradeCredits,
       selectedLevel: this.currentLevel,
       maxUnlockedLevel: this.maxUnlockedLevel,
       completedLevels: [...this.completedLevels].sort((left, right) => left - right),
+      runUpgradeLevels: { ...this.runUpgradeLevels },
       difficulty,
       availableWindowCount: playableWindows.length,
       requiredWindowCount: difficulty.activeWindows,
@@ -418,6 +505,8 @@ export class GameEngine {
     this.balls = []
     this.bonusCollectionCount = 0
     this.utilityCharges = 0
+    this.resetRunUpgradeState()
+    this.queueLevelLoadoutGrant()
     this.clearActiveUtilities()
     this.pauseReason = null
     this.pausedPhase = null
@@ -436,6 +525,8 @@ export class GameEngine {
     this.balls = []
     this.bonusCollectionCount = 0
     this.utilityCharges = 0
+    this.resetRunUpgradeState()
+    this.resetLevelRewardTracking()
     this.clearActiveUtilities()
     this.resetLevelTimer()
     this.resetRouteState()
@@ -468,11 +559,14 @@ export class GameEngine {
     this.clearWindowFocusState()
     this.resetLevelTimer()
     this.resetRouteState()
+    this.pendingLevelLoadoutGrant = false
+    this.resetLevelRewardTracking()
 
     if (this.phase === 'idle') {
       this.note = `Level ${level} queued. Arm the field to begin.`
     } else {
       this.phase = 'waiting'
+      this.queueLevelLoadoutGrant()
       this.note = `Level ${level} selected. Route the signal through each relay window in order.`
     }
 
@@ -489,8 +583,9 @@ export class GameEngine {
     }
 
     this.utilityCharges -= 1
-    this.bridgePulseEndsAt = now + BRIDGE_PULSE_DURATION_MS
-    this.note = `Bridge pulse live for ${formatDurationMs(BRIDGE_PULSE_DURATION_MS)}. Side locks suppressed.`
+    const durationMs = Math.round(BRIDGE_PULSE_DURATION_MS * this.getUtilityDurationScale())
+    this.bridgePulseEndsAt = now + durationMs
+    this.note = `Bridge pulse live for ${formatDurationMs(durationMs)}. Side locks suppressed.`
     this.emitSnapshot()
   }
 
@@ -504,9 +599,34 @@ export class GameEngine {
     }
 
     this.utilityCharges -= 1
-    this.timeBrakeEndsAt = now + TIME_BRAKE_DURATION_MS
-    this.note = `Time brake live for ${formatDurationMs(TIME_BRAKE_DURATION_MS)}. Signal speed reduced.`
+    const durationMs = Math.round(TIME_BRAKE_DURATION_MS * this.getUtilityDurationScale())
+    this.timeBrakeEndsAt = now + durationMs
+    this.note = `Time brake live for ${formatDurationMs(durationMs)}. Signal speed reduced.`
     this.emitSnapshot()
+  }
+
+  purchaseUpgrade(id: RunUpgradeId): boolean {
+    if (this.phase !== 'summary' && this.phase !== 'waiting') {
+      return false
+    }
+
+    const currentLevel = this.getRunUpgradeLevel(id)
+    const cost = getRunUpgradeCost(id, currentLevel)
+    if (cost === null || this.upgradeCredits < cost) {
+      return false
+    }
+
+    const nextLevel = currentLevel + 1
+    const upgrade = getRunUpgradeDefinition(id)
+
+    this.upgradeCredits -= cost
+    this.runUpgradeLevels = {
+      ...this.runUpgradeLevels,
+      [id]: nextLevel,
+    }
+    this.note = `${upgrade.label} upgraded to ${nextLevel === upgrade.maxLevel ? 'max' : `mk ${nextLevel}`}.`
+    this.emitSnapshot()
+    return true
   }
 
   continueFromSummary(): void {
@@ -523,6 +643,7 @@ export class GameEngine {
     this.resetLevelTimer()
     this.resetRouteState()
     this.phase = 'waiting'
+    this.queueLevelLoadoutGrant()
     this.note = `Level ${this.currentLevel} queued. Route the signal through each relay window in order.`
     this.emitSnapshot()
   }
@@ -682,6 +803,7 @@ export class GameEngine {
     }
 
     if (this.balls.length === 0) {
+      this.grantPendingLevelLoadout()
       this.balls = this.createBallSet(activeWindows, difficulty, obstacles)
       this.startLevelTimer(now)
       this.lastStepAt = now
@@ -760,14 +882,20 @@ export class GameEngine {
     const clearTimeMs = this.getCurrentLevelTime(now)
     const clearPerformance = this.recordLevelPerformance(clearedLevel, clearTimeMs, difficulty)
     const levelClearScoreDelta = wasCompleted ? 0 : 1
-    const scoreDelta = levelClearScoreDelta + clearPerformance.medalScoreDelta
+    const levelClearCreditDelta = wasCompleted ? 0 : 1
+
+    if (!wasCompleted) {
+      this.addScoreReward(levelClearScoreDelta)
+    }
+    this.addScoreReward(clearPerformance.medalScoreDelta)
+    this.addUtilityChargeReward(clearPerformance.utilityChargeDelta)
+    this.addUpgradeCreditReward(levelClearCreditDelta + clearPerformance.creditDelta)
+
+    const scoreDelta = this.currentLevelScoreGain
+    const utilityChargeDelta = this.currentLevelChargeGain
+    const creditDelta = this.currentLevelCreditGain
 
     this.completedLevels.add(clearedLevel)
-    if (!wasCompleted) {
-      this.score += 1
-    }
-    this.score += clearPerformance.medalScoreDelta
-    this.utilityCharges += clearPerformance.utilityChargeDelta
     this.streak += 1
     this.bestStreak = Math.max(this.bestStreak, this.streak)
     this.balls = []
@@ -797,8 +925,10 @@ export class GameEngine {
       isBestTime: clearPerformance.isBestTime,
       bestTimeMs: this.bestLevelTimesMs.get(clearedLevel) ?? clearTimeMs,
       scoreDelta,
-      utilityChargeDelta: clearPerformance.utilityChargeDelta,
+      utilityChargeDelta,
+      creditDelta,
       totalScore: this.score,
+      totalCredits: this.upgradeCredits,
       totalStreak: this.streak,
       totalCompletedLevels: this.completedLevels.size,
       relayCount: Math.max(0, difficulty.activeWindows - 2),
@@ -814,8 +944,9 @@ export class GameEngine {
     this.pausedNote = null
     this.clearWindowFocusState()
     this.note = nextLevel === null
-      ? `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(clearPerformance.utilityChargeDelta)} Campaign complete.`
-      : `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(clearPerformance.utilityChargeDelta)} Level ${nextLevel} ready when you are.`
+      ? `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(utilityChargeDelta)}${this.getCreditRewardNote(creditDelta)} Campaign complete.`
+      : `Level ${clearedLevel} cleared in ${formatDurationMs(clearTimeMs)}.${this.getMedalNote(clearPerformance)}${clearPerformance.isBestTime ? ' New best time.' : ''}${this.getUtilityRewardNote(utilityChargeDelta)}${this.getCreditRewardNote(creditDelta)} Level ${nextLevel} ready when you are.`
+    this.resetLevelRewardTracking()
     this.emitSnapshot()
   }
 
@@ -866,9 +997,7 @@ export class GameEngine {
     isGoal: boolean,
   ): GoalAnchor {
     const rect = rectFromWindow(windowState)
-    const radius = isGoal
-      ? Math.max(18, difficulty.radius * 1.8)
-      : Math.max(16, difficulty.radius * 1.45)
+    const radius = this.getRouteTargetRadius(difficulty, isGoal)
     const margin = radius + 18
 
     for (let attempt = 0; attempt < 32; attempt += 1) {
@@ -929,9 +1058,7 @@ export class GameEngine {
     const rect = rectFromWindow(targetWindow)
     const roomObstacles = obstacles.filter((obstacle) => obstacle.windowId === targetWindow.id && !obstacle.destroyed)
     const isGoal = this.currentRouteStep >= targetWindows.length - 1
-    const radius = isGoal
-      ? Math.max(18, difficulty.radius * 1.8)
-      : Math.max(16, difficulty.radius * 1.45)
+    const radius = this.getRouteTargetRadius(difficulty, isGoal)
     const margin = radius + 18
 
     let x = clamp(
@@ -1110,7 +1237,7 @@ export class GameEngine {
   ): GoalAnchor | null {
     const rect = rectFromWindow(windowState)
     const radius = Math.max(12, difficulty.radius * 0.9)
-    const targetRadius = Math.max(16, difficulty.radius * 1.45)
+    const targetRadius = this.getRouteTargetRadius(difficulty, false)
     const margin = radius + 18
     const targetX = clamp(rect.left + (rect.width * routeTargetAnchor.u), rect.left + targetRadius + 18, rect.right - targetRadius - 18)
     const targetY = clamp(rect.top + (rect.height * routeTargetAnchor.v), rect.top + targetRadius + 18, rect.bottom - targetRadius - 18)
@@ -1220,9 +1347,7 @@ export class GameEngine {
     if (routeTargetAnchor) {
       const routeTargetIndex = this.targetAnchors.findIndex((anchor) => anchor === routeTargetAnchor)
       const isGoal = routeTargetIndex === this.targetAnchors.length - 1
-      const targetRadius = isGoal
-        ? Math.max(18, difficulty.radius * 1.8)
-        : Math.max(16, difficulty.radius * 1.45)
+      const targetRadius = this.getRouteTargetRadius(difficulty, isGoal)
 
       forbiddenCircles.push({
         x: clamp(rect.left + (rect.width * routeTargetAnchor.u), rect.left + targetRadius + 18, rect.right - targetRadius - 18),
@@ -1468,9 +1593,10 @@ export class GameEngine {
       this.claimedScoreNodeWindowIds.add(scoreWindowId)
       this.enteredScoreNodeWindowIds.delete(scoreWindowId)
       this.bonusCollectionCount += 1
-      this.score += activeScoreNode.value
-      this.utilityCharges += SCORE_NODE_CHARGE_VALUE
-      this.note = `${roomTitle} bonus secured. +${activeScoreNode.value} score. +${SCORE_NODE_CHARGE_VALUE} utility charge.`
+      this.addScoreReward(activeScoreNode.value)
+      this.addUtilityChargeReward(SCORE_NODE_CHARGE_VALUE)
+      this.addUpgradeCreditReward(SCORE_NODE_CREDIT_VALUE)
+      this.note = `${roomTitle} bonus secured. +${activeScoreNode.value} score. +${SCORE_NODE_CHARGE_VALUE} utility charge. +${SCORE_NODE_CREDIT_VALUE} signal credit.`
       return
     }
 
@@ -1511,14 +1637,15 @@ export class GameEngine {
       this.bonusCollectionCount += 1
 
       if (bonus.scoreValue > 0) {
-        this.score += bonus.scoreValue
+        this.addScoreReward(bonus.scoreValue)
       }
       if (bonus.chargeValue > 0) {
-        this.utilityCharges += bonus.chargeValue
+        this.addUtilityChargeReward(bonus.chargeValue)
       }
       if (bonus.timeValueMs > 0) {
         this.applyTimeBonus(now, bonus.timeValueMs)
       }
+      this.addUpgradeCreditReward(this.getAmbientBonusCreditValue(bonus))
 
       this.note = `${roomTitle} ${this.getAmbientBonusRewardText(bonus)}`
     }
@@ -1550,16 +1677,28 @@ export class GameEngine {
     return `-${formatBonusSeconds(anchor.timeValueMs)}S`
   }
 
-  private getAmbientBonusRewardText(bonus: AmbientBonusState): string {
+  private getAmbientBonusCreditValue(bonus: Pick<AmbientBonusState, 'kind' | 'scoreValue' | 'chargeValue'>): number {
     if (bonus.kind === 'score') {
-      return `score cache secured. +${bonus.scoreValue} score.`
+      return Math.max(1, bonus.scoreValue)
     }
 
     if (bonus.kind === 'charge') {
-      return `charge cache secured. +${bonus.chargeValue} utility charge${bonus.chargeValue === 1 ? '' : 's'}.`
+      return Math.max(1, bonus.chargeValue)
     }
 
-    return `time cache secured. -${formatDurationMsShort(bonus.timeValueMs)} from the clock.`
+    return 1
+  }
+
+  private getAmbientBonusRewardText(bonus: AmbientBonusState): string {
+    if (bonus.kind === 'score') {
+      return `score cache secured. +${bonus.scoreValue} score. +${this.getAmbientBonusCreditValue(bonus)} signal credit${this.getAmbientBonusCreditValue(bonus) === 1 ? '' : 's'}.`
+    }
+
+    if (bonus.kind === 'charge') {
+      return `charge cache secured. +${bonus.chargeValue} utility charge${bonus.chargeValue === 1 ? '' : 's'}. +${this.getAmbientBonusCreditValue(bonus)} signal credit${this.getAmbientBonusCreditValue(bonus) === 1 ? '' : 's'}.`
+    }
+
+    return `time cache secured. -${formatDurationMsShort(bonus.timeValueMs)} from the clock. +${this.getAmbientBonusCreditValue(bonus)} signal credit.`
   }
 
   private startLevelTimer(now: number): void {
@@ -1623,6 +1762,7 @@ export class GameEngine {
     isNewMedal: boolean
     medalScoreDelta: number
     utilityChargeDelta: number
+    creditDelta: number
   } {
     const isBestTime = this.recordBestLevelTime(level, timeMs)
     const currentMedal = getMedalTierForTime(difficulty.medalThresholds, timeMs)
@@ -1642,6 +1782,7 @@ export class GameEngine {
       isNewMedal,
       medalScoreDelta,
       utilityChargeDelta: medalScoreDelta,
+      creditDelta: medalScoreDelta,
     }
   }
 
@@ -1682,6 +1823,14 @@ export class GameEngine {
     }
 
     return ` +${chargeDelta} utility charge${chargeDelta === 1 ? '' : 's'}.`
+  }
+
+  private getCreditRewardNote(creditDelta: number): string {
+    if (creditDelta <= 0) {
+      return ''
+    }
+
+    return ` +${creditDelta} signal credit${creditDelta === 1 ? '' : 's'}.`
   }
 
   private getBridgePulseRemainingMs(now: number): number {

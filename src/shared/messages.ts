@@ -1,4 +1,4 @@
-import type { CatchAttemptPayload, GameSnapshot, WindowBoundsPayload } from './types'
+import type { CatchAttemptPayload, GameSnapshot, RunUpgradeId, WindowBoundsPayload } from './types'
 
 export type GameMessage =
   | {
@@ -45,6 +45,12 @@ export type GameMessage =
       type: 'summary_action'
       payload: {
         action: 'next' | 'replay' | 'lobby'
+      }
+    }
+  | {
+      type: 'purchase_upgrade'
+      payload: {
+        id: RunUpgradeId
       }
     }
   | {
