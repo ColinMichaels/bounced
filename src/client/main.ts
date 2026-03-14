@@ -7,8 +7,8 @@ import type { GameSnapshot, WindowBoundsPayload } from '../shared/types'
 import { BallRenderer } from './renderer'
 
 interface LayoutHint {
-  outerWidth: number
-  outerHeight: number
+  contentWidth: number
+  contentHeight: number
 }
 
 interface LockedRoomSize {
@@ -20,6 +20,11 @@ interface LockedRoomSize {
   canvasHeight: number
 }
 
+interface ChromeInsets {
+  width: number
+  height: number
+}
+
 const search = new URLSearchParams(window.location.search)
 const sessionId = search.get('session') ?? 'default'
 const channelName = search.get('channel') ?? createGameChannelName(sessionId)
@@ -27,13 +32,12 @@ const windowId = search.get('id') ?? `play-window-${Math.random().toString(36).s
 const slot = Number(search.get('slot') ?? '0')
 const title = search.get('title') ?? `Room ${slot + 1}`
 const roomLabel = String(slot + 1).padStart(2, '0')
-const initialTargetOuterWidth = Number(search.get('targetWidth') ?? '0')
-const initialTargetOuterHeight = Number(search.get('targetHeight') ?? '0')
+const initialTargetContentWidth = Number(search.get('targetWidth') ?? '0')
+const initialTargetContentHeight = Number(search.get('targetHeight') ?? '0')
 
 const titleElement = must<HTMLElement>('window-title')
 const statusElement = must<HTMLElement>('client-status')
 const clientApp = must<HTMLElement>('client-app')
-const clientHeader = must<HTMLElement>('client-header')
 const canvas = must<HTMLCanvasElement>('game-canvas')
 const canvasFrame = must<HTMLElement>('canvas-frame')
 const DRAW_FRAME_INTERVAL_MS = 1000 / 30
@@ -50,12 +54,13 @@ const resizeObserver = new ResizeObserver(() => {
 
 let snapshot: GameSnapshot | null = null
 let bounds: WindowBoundsPayload | null = null
-let layoutHint: LayoutHint | null = initialTargetOuterWidth > 0 && initialTargetOuterHeight > 0
+let layoutHint: LayoutHint | null = initialTargetContentWidth > 0 && initialTargetContentHeight > 0
   ? {
-      outerWidth: Math.round(initialTargetOuterWidth),
-      outerHeight: Math.round(initialTargetOuterHeight),
+      contentWidth: Math.round(initialTargetContentWidth),
+      contentHeight: Math.round(initialTargetContentHeight),
     }
   : null
+let chromeInsets: ChromeInsets | null = null
 let lockedLayoutKey: string | null = null
 let pendingLayoutKey: string | null = null
 let drawFrameId = 0
@@ -106,8 +111,8 @@ function handleMessage(message: GameMessage): void {
     }
 
     layoutHint = {
-      outerWidth: Math.round(message.payload.outerWidth),
-      outerHeight: Math.round(message.payload.outerHeight),
+      contentWidth: Math.round(message.payload.contentWidth),
+      contentHeight: Math.round(message.payload.contentHeight),
     }
 
     if (snapshot) {
@@ -195,9 +200,7 @@ function syncCanvasLock(snapshot: GameSnapshot): void {
       }
 
       applyLockedRoomSize(roomSize)
-      const targetOuterWidth = layoutHint?.outerWidth ?? Math.round(window.outerWidth)
-      const targetOuterHeight = layoutHint?.outerHeight ?? Math.round(window.outerHeight)
-      syncOuterWindowSize(targetOuterWidth, targetOuterHeight, () => {
+      syncOuterWindowSize(roomSize, () => {
         lockedLayoutKey = nextLayoutKey
         pendingLayoutKey = null
         reportBounds()
@@ -240,17 +243,21 @@ function releaseLockedRoomSize(): void {
 }
 
 function getLayoutLockKey(snapshot: GameSnapshot): string {
-  const hintWidth = layoutHint?.outerWidth ?? Math.round(window.outerWidth)
-  const hintHeight = layoutHint?.outerHeight ?? Math.round(window.outerHeight)
+  const hintWidth = layoutHint?.contentWidth ?? Math.round(canvasFrame.clientWidth)
+  const hintHeight = layoutHint?.contentHeight ?? Math.round(canvasFrame.clientHeight)
 
   return `${snapshot.selectedLevel}:${snapshot.requiredWindowCount}:${hintWidth}x${hintHeight}`
 }
 
 function getTargetRoomSize(): LockedRoomSize | null {
-  const targetOuterWidth = layoutHint?.outerWidth ?? Math.round(window.outerWidth)
-  const targetOuterHeight = layoutHint?.outerHeight ?? Math.round(window.outerHeight)
-  const chromeWidth = Math.max(0, window.outerWidth - window.innerWidth)
-  const chromeHeight = Math.max(0, window.outerHeight - window.innerHeight)
+  const canvasWidth = Math.max(
+    120,
+    Math.round(layoutHint?.contentWidth ?? canvasFrame.clientWidth ?? canvas.clientWidth),
+  )
+  const canvasHeight = Math.max(
+    96,
+    Math.round(layoutHint?.contentHeight ?? canvasFrame.clientHeight ?? canvas.clientHeight),
+  )
   const shellStyles = window.getComputedStyle(document.body)
   const shellPaddingX = Math.ceil(
     parseFloat(shellStyles.paddingLeft || '0')
@@ -260,14 +267,10 @@ function getTargetRoomSize(): LockedRoomSize | null {
     parseFloat(shellStyles.paddingTop || '0')
     + parseFloat(shellStyles.paddingBottom || '0'),
   )
-  const appGap = Math.ceil(parseFloat(window.getComputedStyle(clientApp).rowGap || '0'))
-  const headerHeight = Math.ceil(clientHeader.getBoundingClientRect().height)
-  const shellWidth = Math.max(180, Math.round(targetOuterWidth - chromeWidth))
-  const shellHeight = Math.max(140, Math.round(targetOuterHeight - chromeHeight))
-  const appWidth = Math.max(140, shellWidth - shellPaddingX)
-  const appHeight = Math.max(headerHeight + appGap + 96, shellHeight - shellPaddingY)
-  const canvasWidth = Math.max(120, appWidth)
-  const canvasHeight = Math.max(96, appHeight - headerHeight - appGap)
+  const shellWidth = Math.max(180, canvasWidth + shellPaddingX)
+  const shellHeight = Math.max(140, canvasHeight + shellPaddingY)
+  const appWidth = canvasWidth
+  const appHeight = canvasHeight
 
   if (canvasWidth <= 0 || canvasHeight <= 0) {
     return null
@@ -276,7 +279,7 @@ function getTargetRoomSize(): LockedRoomSize | null {
   return {
     shellWidth,
     shellHeight,
-    appWidth: Math.max(appWidth, Math.ceil(clientHeader.scrollWidth)),
+    appWidth,
     appHeight,
     canvasWidth,
     canvasHeight,
@@ -317,11 +320,13 @@ function applyLockedRoomSize(roomSize: LockedRoomSize): void {
 }
 
 function syncOuterWindowSize(
-  targetOuterWidth: number,
-  targetOuterHeight: number,
+  roomSize: LockedRoomSize,
   onSettled: () => void,
   attempt = 0,
 ): void {
+  const targetChromeInsets = measureChromeInsets()
+  const targetOuterWidth = roomSize.shellWidth + targetChromeInsets.width
+  const targetOuterHeight = roomSize.shellHeight + targetChromeInsets.height
   const widthSettled = Math.abs(window.outerWidth - targetOuterWidth) <= 1
   const heightSettled = Math.abs(window.outerHeight - targetOuterHeight) <= 1
 
@@ -342,14 +347,15 @@ function syncOuterWindowSize(
   }
 
   window.requestAnimationFrame(() => {
-    syncOuterWindowSize(targetOuterWidth, targetOuterHeight, onSettled, attempt + 1)
+    syncOuterWindowSize(roomSize, onSettled, attempt + 1)
   })
 }
 
 function measureWindow(): WindowBoundsPayload {
   const canvasRect = canvas.getBoundingClientRect()
-  const frameInset = Math.max(0, (window.outerWidth - window.innerWidth) / 2)
-  const verticalChrome = Math.max(0, window.outerHeight - window.innerHeight)
+  const currentChromeInsets = measureChromeInsets()
+  const frameInset = currentChromeInsets.width / 2
+  const verticalChrome = currentChromeInsets.height
   const contentOriginX = window.screenX + frameInset
   const contentOriginY = window.screenY + Math.max(0, verticalChrome - frameInset)
 
@@ -367,6 +373,25 @@ function measureWindow(): WindowBoundsPayload {
     contentHeight: pendingLayoutKey ? 0 : canvasRect.height,
     visible: !document.hidden,
   }
+}
+
+function measureChromeInsets(): ChromeInsets {
+  const currentInsets = {
+    width: Math.max(0, Math.round(window.outerWidth - window.innerWidth)),
+    height: Math.max(0, Math.round(window.outerHeight - window.innerHeight)),
+  }
+
+  if (!chromeInsets) {
+    chromeInsets = currentInsets
+    return chromeInsets
+  }
+
+  chromeInsets = {
+    width: chromeInsets.width > 0 ? chromeInsets.width : currentInsets.width,
+    height: chromeInsets.height > 0 ? chromeInsets.height : currentInsets.height,
+  }
+
+  return chromeInsets
 }
 
 function handleCanvasClick(event: MouseEvent): void {
